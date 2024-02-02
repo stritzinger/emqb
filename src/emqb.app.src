@@ -1,0 +1,16 @@
+{application, emqb,
+ [{description, "Erlang MQTT bridge"},
+  {vsn, "0.1.0"},
+  {registered, []},
+  {mod, {emqb_app, []}},
+  {applications,
+   [kernel,
+    stdlib,
+    emqtt
+   ]},
+  {env,[]},
+  {modules, []},
+
+  {licenses, ["Apache 2.0"]},
+  {links, []}
+ ]}.
