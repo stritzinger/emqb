@@ -1,9 +1,4 @@
-%%%-------------------------------------------------------------------
-%% @doc emqb main application callback module
-%% @end
-%%
-%% @author Sebastien Merle <s.merle@gmail.com>
-%%
+%%--------------------------------------------------------------------
 %% Copyright (c) 2024 Peer Stritzinger GmbH. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
@@ -19,22 +14,19 @@
 %% limitations under the License.
 %%--------------------------------------------------------------------
 
--module(emqb_app).
+-module(emqb_codec).
 
--behaviour(application).
+-callback encode(Properties, PayloadTerm)
+    -> {ok, NewProperties, PayloadData} | {error, Reason}
+  when Properties :: emqtt:properties(),
+       PayloadTerm :: term(),
+       NewProperties :: emqtt:properties(),
+       PayloadData :: iodata(),
+       Reason :: term().
 
-
-%%% EXPORTS %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-% Behaviour application callback functions
--export([start/2]).
--export([stop/1]).
-
-
-%%% BEHAVIOUR application CALLBACK FUNCTIONS %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-start(_StartType, _StartArgs) ->
-    emqb_sup:start_link().
-
-stop(_State) ->
-    ok.
+-callback decode(Properties, PayloadData)
+    -> {ok, PayloadTerm} | {error, Reason}
+  when Properties :: emqtt:properties(),
+       PayloadData :: binary(),
+       PayloadTerm :: term(),
+       Reason :: term().

@@ -1,6 +1,8 @@
 %%--------------------------------------------------------------------
-%% @doc emqb root supervisor
+%% @doc emqb topic supervisor
 %% @end
+%%
+%% @author Sebastien Merle <s.merle@gmail.com>
 %%
 %% Copyright (c) 2024 Peer Stritzinger GmbH. All Rights Reserved.
 %%
@@ -17,14 +19,16 @@
 %% limitations under the License.
 %%--------------------------------------------------------------------
 
--module(emqb_sup).
+-module(emqb_topic_sup).
 
 -behaviour(supervisor).
+
 
 %%% EXPORTS %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 % Public functions
 -export([start_link/0]).
+-export([start_topic/1]).
 
 % Behaviour supervisor callback functions
 -export([init/1]).
@@ -33,22 +37,6 @@
 %%% MACROS %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 -define(SERVER, ?MODULE).
--define(SUPERVISOR(MOD), #{
-    id => MOD,
-    start => {MOD, start_link, []},
-    restart => permanent,
-    shutdown => infinity,
-    type => supervisor,
-    modules => [MOD]
-}).
--define(WORKER(MOD), #{
-    id => MOD,
-    start => {MOD, start_link, []},
-    restart => permanent,
-    shutdown => 2000,
-    type => worker,
-    modules => [MOD]
-}).
 
 
 %%% PUBLIC FUNCTIONS %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -56,18 +44,25 @@
 start_link() ->
     supervisor:start_link({local, ?SERVER}, ?MODULE, []).
 
+start_topic(TopicPath) ->
+    supervisor:start_child(?SERVER, [TopicPath]).
+
 
 %%% BEHAVIOUR supervisor CALLBACK FUNCTIONS %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 init([]) ->
     SupFlags = #{
-        strategy => one_for_all,
-        intensity => 1,
-        period => 120
+        strategy => simple_one_for_one,
+        intensity => 3,
+        period => 60
     },
     ChildSpecs = [
-        ?SUPERVISOR(emqb_topic_sup),
-        ?WORKER(emqb_registry),
-        ?WORKER(emqb_manager)
+        #{
+            id => emqb_topic,
+            start => {emqb_topic, start_link, []},
+            restart => transient,
+            shutdown => 2000,
+            type => worker,
+            modules => [emqb_topic]}
     ],
     {ok, {SupFlags, ChildSpecs}}.
