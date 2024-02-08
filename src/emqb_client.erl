@@ -457,7 +457,7 @@ emqtt_start(Data = #data{client = undefined, emqtt_opts = Opts}) ->
     case emqtt:start_link(Opts) of
         {error, Reason} -> {error, Reason};
         {ok, Client} ->
-            % We don't wnt to crash if EMQTT client crash, so we unlink and monitor
+            % We don't want to crash if EMQTT client crashes, so we unlink and monitor
             erlang:unlink(Client),
             MonRef = erlang:monitor(process, Client),
             {ok, Data#data{client = Client, client_mon = MonRef}}
@@ -506,13 +506,24 @@ update_conn_opts(_Data, [{'Wildcard-Subscription-Available', false} | _Rest]) ->
 update_conn_opts(Data, [{_PropName, _PropValue} | Rest]) ->
     update_conn_opts(Data, Rest).
 
+add_custom_prop(Key, Value, Props) when is_atom(Key) ->
+    add_custom_prop(atom_to_binary(Key), Value, Props);
+add_custom_prop(Key, Value, #{'User-Property' := UserProps} = Props)
+  when is_binary(Key), is_binary(Value) ->
+    Props#{'User-Property' => [{Key, Value} | UserProps]};
+add_custom_prop(Key, Value, #{} = Props)
+  when is_binary(Key), is_binary(Value) ->
+    Props#{'User-Property' => [{Key, Value}]}.
+
 publish_external(Data, Topic, Properties, Payload, Opts) ->
     ?LOG_DEBUG("PUBLISHING to ~p with ~p and ~p (~p)", [Topic, Properties, Payload, Opts]),
     #data{client = Client, codec = Codec} = Data,
     case Codec:encode(Properties, Payload) of
         {error, Reason} -> {error, Reason, Data};
         {ok, Properties2, PayloadBin} ->
-            case emqtt:publish(Client, Topic, Properties2, PayloadBin, Opts) of
+            InstanceId = emqb_app:instance_id(),
+            Properties3 = add_custom_prop(bid, InstanceId, Properties2),
+            case emqtt:publish(Client, Topic, Properties3, PayloadBin, Opts) of
                 ok -> {ok, Data};
                 {ok, PacketId} -> {ok, PacketId, Data};
                 {error, Reason} -> {error, Reason, Data}

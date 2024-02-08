@@ -26,14 +26,24 @@
 
 %%% EXPORTS %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
+% API functions
+-export([instance_id/0]).
+
 % Behaviour application callback functions
 -export([start/2]).
 -export([stop/1]).
 
 
+%%% API FUNCTIONS %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+instance_id() -> persistent_term:get(trag_instance_id).
+
+
 %%% BEHAVIOUR application CALLBACK FUNCTIONS %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 start(_StartType, _StartArgs) ->
+    InstanceId = base64:encode(crypto:strong_rand_bytes(12)),
+    persistent_term:put(trag_instance_id, InstanceId),
     emqb_sup:start_link().
 
 stop(_State) ->
