@@ -1,5 +1,6 @@
 %%--------------------------------------------------------------------
 %% @doc emqb topic manager
+%% Manage the creation of the topic processes.
 %% @end
 %%
 %% @author Sebastien Merle <s.merle@gmail.com>
@@ -33,6 +34,7 @@
 
 % API Functions
 -export([start_link/0]).
+-export([topic/1]).
 
 % Behaviour gen_server callback functions
 -export([init/1]).
@@ -57,12 +59,24 @@
 start_link() ->
     gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
 
+-spec topic(emqb_topic:path()) -> {ok, pid()} | {error, term()}.
+topic(TopicPath) ->
+    case emqb_registry:lookup_topic(TopicPath) of
+        {ok, TopicPid} -> {ok, TopicPid};
+        error -> gen_server:call(?SERVER, {create_topic, TopicPath})
+    end.
+
 
 %%% BEHAVIOUR gen_server CALLBACK FUNCTIONS %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 init([]) ->
     {ok, #state{}}.
 
+handle_call({create_topic, TopicPath}, _From, State) ->
+    case emqb_registry:lookup_topic(TopicPath) of
+        {ok, TopicPid} -> {reply, {ok, TopicPid}, State};
+        error -> {reply, emqb_topic_sup:start_topic(TopicPath), State}
+    end;
 handle_call(Request, From, State) ->
     ?LOG_WARNING("Unexpected call ~p from ~p", [Request, From]),
     {reply, {error, unexpected_call}, State}.

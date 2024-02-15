@@ -31,243 +31,286 @@
 -export([all/0]).
 
 % Test cases
--export([parse_topic_test/1]).
 -export([tree_test/1]).
+-export([resolve_test/1]).
 
+
+%%% MACROS %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+-define(FOLD_FUN, fun(__T, __D, __A) -> [{__T, __D} | __A] end).
+-define(assertTreeFind(TREE, TOPIC, EXP),
+    ?assertEqual(EXP, emqb_topic_tree:find(TOPIC, TREE))).
+-define(assertTreeFold(TREE, EXP),
+    ?assertEqual(lists:sort(EXP),
+                 lists:sort(emqb_topic_tree:fold(?FOLD_FUN, [], TREE)))).
+-define(assertTreeMatch(TREE, PATTERN, EXP),
+    ?assertEqual(lists:sort(EXP),
+                 lists:sort(emqb_topic_tree:match(?FOLD_FUN, [], PATTERN, TREE)))).
+-define(assertTreeResolve(TREE, TOPIC, EXP),
+    ?assertEqual(lists:sort(EXP),
+                 lists:sort(emqb_topic_tree:resolve(?FOLD_FUN, [], TOPIC, TREE)))).
 
 %%% COMMON TEST FUNCTIONS %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-all() ->
-    [parse_topic_test, tree_test].
+all() -> [
+    tree_test,
+    resolve_test
+].
 
 
 %%% TEST CASES %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-parse_topic_test(_Config) ->
-    ?assertError(badarg, emqb_topic_tree:parse_topic(<<"">>)),
-    ?assertError(badarg, emqb_topic_tree:parse_topic([])),
-    ?assertEqual([<<"">>, <<"">>],
-                 emqb_topic_tree:parse_topic(<<"/">>)),
-    ?assertEqual([<<"foo">>, <<"bar">>],
-                 emqb_topic_tree:parse_topic(<<"foo/bar">>)),
-    ?assertEqual([<<"">>, <<"foo">>, <<"bar">>],
-                 emqb_topic_tree:parse_topic(<<"/foo/bar">>)),
-    ?assertEqual([<<"foo">>, <<"bar">>, <<"">>],
-                 emqb_topic_tree:parse_topic(<<"foo/bar/">>)),
-    ?assertEqual([<<"foo">>, '+', <<"bar">>, '#'],
-                 emqb_topic_tree:parse_topic(<<"foo/+/bar/#">>)),
-    ?assertError(badarg, emqb_topic_tree:parse_topic(<<"foo/#/bar/+">>)),
-    ?assertError(badarg, emqb_topic_tree:parse_topic([<<"foo">>, '#', <<"bar">>])),
-    ok.
-
 tree_test(_Config) ->
-    FoldFun = fun(T, D, A) -> [{T, D} | A] end,
-
     T1 = emqb_topic_tree:new(),
     ?assertEqual(0, emqb_topic_tree:size(T1)),
-    ?assertEqual(error, emqb_topic_tree:find(<<"foo">>, T1)),
-    ?assertEqual(error, emqb_topic_tree:find(<<"foo/bar">>, T1)),
-    ?assertEqual(error, emqb_topic_tree:find(<<"foo/bar/boz">>, T1)),
-    ?assertEqual(error, emqb_topic_tree:find(<<"foo/biz/boz">>, T1)),
-    ?assertEqual(error, emqb_topic_tree:find(<<"foo/biz/boz/">>, T1)),
+    ?assertTreeFind(T1, <<"foo">>, error),
+    ?assertTreeFind(T1, <<"foo/bar">>, error),
+    ?assertTreeFind(T1, <<"foo/bar/boz">>, error),
+    ?assertTreeFind(T1, <<"foo/biz/boz">>, error),
+    ?assertTreeFind(T1, <<"foo/biz/boz/">>, error),
 
     ?assertEqual(T1, emqb_topic_tree:remove(<<"foo/bar">>, T1)),
 
-    ?assertEqual([], lists:sort(emqb_topic_tree:fold(FoldFun, [], T1))),
+    ?assertTreeFold(T1, []),
 
-    ?assertEqual([], emqb_topic_tree:match(FoldFun, [], <<"#">>, T1)),
-    ?assertEqual([], emqb_topic_tree:match(FoldFun, [], <<"foo/bar">>, T1)),
-    ?assertEqual([], emqb_topic_tree:match(FoldFun, [], <<"foo/+/boz">>, T1)),
-    ?assertEqual([], emqb_topic_tree:match(FoldFun, [], <<"foo/+/boz/">>, T1)),
-    ?assertEqual([], emqb_topic_tree:match(FoldFun, [], <<"+">>, T1)),
-    ?assertEqual([], emqb_topic_tree:match(FoldFun, [], <<"foo/biz/#">>, T1)),
+    ?assertTreeMatch(T1, <<"#">>, []),
+    ?assertTreeMatch(T1, <<"foo/bar">>, []),
+    ?assertTreeMatch(T1, <<"foo/+/boz">>, []),
+    ?assertTreeMatch(T1, <<"foo/+/boz/">>, []),
+    ?assertTreeMatch(T1, <<"+">>, []),
+    ?assertTreeMatch(T1, <<"foo/biz/#">>, []),
 
     T2 = emqb_topic_tree:update(<<"foo/bar">>, toto, T1),
     ?assertEqual(1, emqb_topic_tree:size(T2)),
-    ?assertEqual(error, emqb_topic_tree:find(<<"foo">>, T2)),
-    ?assertEqual({ok, toto}, emqb_topic_tree:find(<<"foo/bar">>, T2)),
-    ?assertEqual(error, emqb_topic_tree:find(<<"foo/bar/boz">>, T2)),
-    ?assertEqual(error, emqb_topic_tree:find(<<"foo/biz/boz">>, T2)),
-    ?assertEqual(error, emqb_topic_tree:find(<<"foo/biz/boz/">>, T2)),
+    ?assertTreeFind(T2, <<"foo">>, error),
+    ?assertTreeFind(T2, <<"foo/bar">>, {ok, toto}),
+    ?assertTreeFind(T2, <<"foo/bar/boz">>, error),
+    ?assertTreeFind(T2, <<"foo/biz/boz">>, error),
+    ?assertTreeFind(T2, <<"foo/biz/boz/">>, error),
 
-    ?assertEqual([{[<<"foo">>, <<"bar">>], toto}],
-                 lists:sort(emqb_topic_tree:fold(FoldFun, [], T2))),
+    ?assertTreeFold(T2, [{[<<"foo">>, <<"bar">>], toto}]),
 
-    ?assertEqual(lists:sort(emqb_topic_tree:fold(FoldFun, [], T2)),
-                 lists:sort(emqb_topic_tree:match(FoldFun, [], <<"#">>, T2))),
-    ?assertEqual([{[<<"foo">>, <<"bar">>], toto}],
-                 lists:sort(emqb_topic_tree:match(FoldFun, [], <<"foo/bar">>, T2))),
-    ?assertEqual([], emqb_topic_tree:match(FoldFun, [], <<"foo/+/boz">>, T2)),
-    ?assertEqual([], emqb_topic_tree:match(FoldFun, [], <<"foo/+/boz/">>, T2)),
-    ?assertEqual([], emqb_topic_tree:match(FoldFun, [], <<"+">>, T2)),
-    ?assertEqual([], emqb_topic_tree:match(FoldFun, [], <<"foo/biz/#">>, T2)),
+    ?assertEqual(lists:sort(emqb_topic_tree:fold(?FOLD_FUN, [], T2)),
+                 lists:sort(emqb_topic_tree:match(?FOLD_FUN, [], <<"#">>, T2))),
+    ?assertTreeMatch(T2, <<"foo/bar">>, [{[<<"foo">>, <<"bar">>], toto}]),
+    ?assertTreeMatch(T2, <<"foo/+/boz">>, []),
+    ?assertTreeMatch(T2, <<"foo/+/boz/">>, []),
+    ?assertTreeMatch(T2, <<"+">>, []),
+    ?assertTreeMatch(T2, <<"foo/biz/#">>, []),
 
     T3 = emqb_topic_tree:update(<<"foo/bar/boz">>, tata, T2),
     ?assertEqual(2, emqb_topic_tree:size(T3)),
-    ?assertEqual(error, emqb_topic_tree:find(<<"foo">>, T3)),
-    ?assertEqual({ok, toto}, emqb_topic_tree:find(<<"foo/bar">>, T3)),
-    ?assertEqual({ok, tata}, emqb_topic_tree:find(<<"foo/bar/boz">>, T3)),
-    ?assertEqual(error, emqb_topic_tree:find(<<"foo/biz/boz">>, T3)),
-    ?assertEqual(error, emqb_topic_tree:find(<<"foo/biz/boz/">>, T3)),
+    ?assertTreeFind(T3, <<"foo">>, error),
+    ?assertTreeFind(T3, <<"foo/bar">>, {ok, toto}),
+    ?assertTreeFind(T3, <<"foo/bar/boz">>, {ok, tata}),
+    ?assertTreeFind(T3, <<"foo/biz/boz">>, error),
+    ?assertTreeFind(T3, <<"foo/biz/boz/">>, error),
 
-    ?assertEqual([{[<<"foo">>, <<"bar">>], toto},
-                  {[<<"foo">>, <<"bar">>, <<"boz">>], tata}],
-                 lists:sort(emqb_topic_tree:fold(FoldFun, [], T3))),
+    ?assertTreeFold(T3, [
+        {[<<"foo">>, <<"bar">>], toto},
+        {[<<"foo">>, <<"bar">>, <<"boz">>], tata}]),
 
-    ?assertEqual(lists:sort(emqb_topic_tree:fold(FoldFun, [], T3)),
-                 lists:sort(emqb_topic_tree:match(FoldFun, [], <<"#">>, T3))),
-    ?assertEqual([{[<<"foo">>, <<"bar">>], toto}],
-                 lists:sort(emqb_topic_tree:match(FoldFun, [],
-                                                  <<"foo/bar">>, T3))),
-    ?assertEqual([{[<<"foo">>, <<"bar">>, <<"boz">>], tata}],
-                 lists:sort(emqb_topic_tree:match(FoldFun, [], <<"foo/+/boz">>, T3))),
-    ?assertEqual([], emqb_topic_tree:match(FoldFun, [], <<"foo/+/boz/">>, T3)),
-    ?assertEqual([], emqb_topic_tree:match(FoldFun, [], <<"+">>, T3)),
-    ?assertEqual([], emqb_topic_tree:match(FoldFun, [], <<"foo/biz/#">>, T3)),
+    ?assertEqual(lists:sort(emqb_topic_tree:fold(?FOLD_FUN, [], T3)),
+                 lists:sort(emqb_topic_tree:match(?FOLD_FUN, [], <<"#">>, T3))),
+    ?assertTreeMatch(T3, <<"foo/bar">>, [
+        {[<<"foo">>, <<"bar">>], toto}]),
+    ?assertTreeMatch(T3, <<"foo/+/boz">>, [
+        {[<<"foo">>, <<"bar">>, <<"boz">>], tata}]),
+    ?assertTreeMatch(T3, <<"foo/+/boz/">>, []),
+    ?assertTreeMatch(T3, <<"+">>, []),
+    ?assertTreeMatch(T3, <<"foo/biz/#">>, []),
 
     T4 = emqb_topic_tree:update(<<"foo/biz/boz">>, tutu, T3),
     ?assertEqual(3, emqb_topic_tree:size(T4)),
-    ?assertEqual(error, emqb_topic_tree:find(<<"foo">>, T4)),
-    ?assertEqual({ok, toto}, emqb_topic_tree:find(<<"foo/bar">>, T4)),
-    ?assertEqual({ok, tata}, emqb_topic_tree:find(<<"foo/bar/boz">>, T4)),
-    ?assertEqual({ok, tutu}, emqb_topic_tree:find(<<"foo/biz/boz">>, T4)),
-    ?assertEqual(error, emqb_topic_tree:find(<<"foo/biz/boz/">>, T4)),
+    ?assertTreeFind(T4, <<"foo">>, error),
+    ?assertTreeFind(T4, <<"foo/bar">>, {ok, toto}),
+    ?assertTreeFind(T4, <<"foo/bar/boz">>, {ok, tata}),
+    ?assertTreeFind(T4, <<"foo/biz/boz">>, {ok, tutu}),
+    ?assertTreeFind(T4, <<"foo/biz/boz/">>, error),
 
-    ?assertEqual([{[<<"foo">>, <<"bar">>], toto},
-                  {[<<"foo">>, <<"bar">>, <<"boz">>], tata},
-                  {[<<"foo">>, <<"biz">>, <<"boz">>], tutu}],
-                 lists:sort(emqb_topic_tree:fold(FoldFun, [], T4))),
+    ?assertTreeFold(T4, [
+        {[<<"foo">>, <<"bar">>], toto},
+        {[<<"foo">>, <<"bar">>, <<"boz">>], tata},
+        {[<<"foo">>, <<"biz">>, <<"boz">>], tutu}]),
 
-    ?assertEqual(lists:sort(emqb_topic_tree:fold(FoldFun, [], T4)),
-                 lists:sort(emqb_topic_tree:match(FoldFun, [], <<"#">>, T4))),
-    ?assertEqual([{[<<"foo">>, <<"bar">>], toto}],
-                 lists:sort(emqb_topic_tree:match(FoldFun, [], <<"foo/bar">>, T4))),
-    ?assertEqual([{[<<"foo">>, <<"bar">>, <<"boz">>], tata},
-                  {[<<"foo">>, <<"biz">>, <<"boz">>], tutu}],
-                 lists:sort(emqb_topic_tree:match(FoldFun, [], <<"foo/+/boz">>, T4))),
-    ?assertEqual([], emqb_topic_tree:match(FoldFun, [], <<"foo/+/boz/">>, T4)),
-    ?assertEqual([], emqb_topic_tree:match(FoldFun, [], <<"+">>, T4)),
-    ?assertEqual([{[<<"foo">>, <<"biz">>, <<"boz">>], tutu}],
-                 lists:sort(emqb_topic_tree:match(FoldFun, [], <<"foo/biz/#">>, T4))),
+    ?assertEqual(lists:sort(emqb_topic_tree:fold(?FOLD_FUN, [], T4)),
+                 lists:sort(emqb_topic_tree:match(?FOLD_FUN, [], <<"#">>, T4))),
+    ?assertTreeMatch(T4, <<"foo/bar">>, [
+        {[<<"foo">>, <<"bar">>], toto}]),
+    ?assertTreeMatch(T4, <<"foo/+/boz">>, [
+        {[<<"foo">>, <<"bar">>, <<"boz">>], tata},
+        {[<<"foo">>, <<"biz">>, <<"boz">>], tutu}]),
+    ?assertTreeMatch(T4, <<"foo/+/boz/">>, []),
+    ?assertTreeMatch(T4, <<"+">>, []),
+    ?assertTreeMatch(T4, <<"foo/biz/#">>, [
+        {[<<"foo">>, <<"biz">>, <<"boz">>], tutu}]),
 
     T5 = emqb_topic_tree:update(<<"foo/biz/boz/">>, tete, T4),
     ?assertEqual(4, emqb_topic_tree:size(T5)),
-    ?assertEqual(error, emqb_topic_tree:find(<<"foo">>, T5)),
-    ?assertEqual({ok, toto}, emqb_topic_tree:find(<<"foo/bar">>, T5)),
-    ?assertEqual({ok, tata}, emqb_topic_tree:find(<<"foo/bar/boz">>, T5)),
-    ?assertEqual({ok, tutu}, emqb_topic_tree:find(<<"foo/biz/boz">>, T5)),
-    ?assertEqual({ok, tete}, emqb_topic_tree:find(<<"foo/biz/boz/">>, T5)),
+    ?assertTreeFind(T5, <<"foo">>, error),
+    ?assertTreeFind(T5, <<"foo/bar">>, {ok, toto}),
+    ?assertTreeFind(T5, <<"foo/bar/boz">>, {ok, tata}),
+    ?assertTreeFind(T5, <<"foo/biz/boz">>, {ok, tutu}),
+    ?assertTreeFind(T5, <<"foo/biz/boz/">>, {ok, tete}),
 
-    ?assertEqual([{[<<"foo">>, <<"bar">>], toto},
-                  {[<<"foo">>, <<"bar">>, <<"boz">>], tata},
-                  {[<<"foo">>, <<"biz">>, <<"boz">>], tutu},
-                  {[<<"foo">>, <<"biz">>, <<"boz">>, <<"">>], tete}],
-                 lists:sort(emqb_topic_tree:fold(FoldFun, [], T5))),
+    ?assertTreeFold(T5, [
+        {[<<"foo">>, <<"bar">>], toto},
+        {[<<"foo">>, <<"bar">>, <<"boz">>], tata},
+        {[<<"foo">>, <<"biz">>, <<"boz">>], tutu},
+        {[<<"foo">>, <<"biz">>, <<"boz">>, <<"">>], tete}]),
 
-    ?assertEqual(lists:sort(emqb_topic_tree:fold(FoldFun, [], T5)),
-                 lists:sort(emqb_topic_tree:match(FoldFun, [], <<"#">>, T5))),
-    ?assertEqual([{[<<"foo">>, <<"bar">>], toto}],
-                 lists:sort(emqb_topic_tree:match(FoldFun, [], <<"foo/bar">>, T5))),
-    ?assertEqual([{[<<"foo">>, <<"bar">>, <<"boz">>], tata},
-                  {[<<"foo">>, <<"biz">>, <<"boz">>], tutu}],
-                 lists:sort(emqb_topic_tree:match(FoldFun, [], <<"foo/+/boz">>, T5))),
-    ?assertEqual([{[<<"foo">>, <<"biz">>, <<"boz">>, <<"">>], tete}],
-                 lists:sort(emqb_topic_tree:match(FoldFun, [], <<"foo/+/boz/">>, T5))),
-    ?assertEqual([], emqb_topic_tree:match(FoldFun, [], <<"+">>, T5)),
-    ?assertEqual([{[<<"foo">>, <<"biz">>, <<"boz">>], tutu},
-                 {[<<"foo">>, <<"biz">>, <<"boz">>, <<"">>], tete}],
-                 lists:sort(emqb_topic_tree:match(FoldFun, [], <<"foo/biz/#">>, T5))),
+    ?assertEqual(lists:sort(emqb_topic_tree:fold(?FOLD_FUN, [], T5)),
+                 lists:sort(emqb_topic_tree:match(?FOLD_FUN, [], <<"#">>, T5))),
+    ?assertTreeMatch(T5, <<"foo/bar">>, [
+        {[<<"foo">>, <<"bar">>], toto}]),
+    ?assertTreeMatch(T5, <<"foo/+/boz">>, [
+        {[<<"foo">>, <<"bar">>, <<"boz">>], tata},
+        {[<<"foo">>, <<"biz">>, <<"boz">>], tutu}]),
+    ?assertTreeMatch(T5, <<"foo/+/boz/">>, [
+        {[<<"foo">>, <<"biz">>, <<"boz">>, <<"">>], tete}]),
+    ?assertTreeMatch(T5, <<"+">>, []),
+    ?assertTreeMatch(T5, <<"foo/biz/#">>, [
+        {[<<"foo">>, <<"biz">>, <<"boz">>], tutu},
+        {[<<"foo">>, <<"biz">>, <<"boz">>, <<"">>], tete}]),
 
     T6 = emqb_topic_tree:update(<<"foo">>, titi, T5),
     ?assertEqual(5, emqb_topic_tree:size(T6)),
-    ?assertEqual({ok, titi}, emqb_topic_tree:find(<<"foo">>, T6)),
-    ?assertEqual({ok, toto}, emqb_topic_tree:find(<<"foo/bar">>, T6)),
-    ?assertEqual({ok, tata}, emqb_topic_tree:find(<<"foo/bar/boz">>, T6)),
-    ?assertEqual({ok, tutu}, emqb_topic_tree:find(<<"foo/biz/boz">>, T6)),
-    ?assertEqual({ok, tete}, emqb_topic_tree:find(<<"foo/biz/boz/">>, T6)),
+    ?assertTreeFind(T6, <<"foo">>, {ok, titi}),
+    ?assertTreeFind(T6, <<"foo/bar">>, {ok, toto}),
+    ?assertTreeFind(T6, <<"foo/bar/boz">>, {ok, tata}),
+    ?assertTreeFind(T6, <<"foo/biz/boz">>, {ok, tutu}),
+    ?assertTreeFind(T6, <<"foo/biz/boz/">>, {ok, tete}),
 
-    ?assertEqual([{[<<"foo">>], titi},
-                  {[<<"foo">>, <<"bar">>], toto},
-                  {[<<"foo">>, <<"bar">>, <<"boz">>], tata},
-                  {[<<"foo">>, <<"biz">>, <<"boz">>], tutu},
-                  {[<<"foo">>, <<"biz">>, <<"boz">>, <<"">>], tete}],
-                 lists:sort(emqb_topic_tree:fold(FoldFun, [], T6))),
+    ?assertTreeFold(T6, [
+        {[<<"foo">>], titi},
+        {[<<"foo">>, <<"bar">>], toto},
+        {[<<"foo">>, <<"bar">>, <<"boz">>], tata},
+        {[<<"foo">>, <<"biz">>, <<"boz">>], tutu},
+        {[<<"foo">>, <<"biz">>, <<"boz">>, <<"">>], tete}]),
 
-    ?assertEqual(lists:sort(emqb_topic_tree:fold(FoldFun, [], T6)),
-                 lists:sort(emqb_topic_tree:match(FoldFun, [], <<"#">>, T6))),
-    ?assertEqual([{[<<"foo">>, <<"bar">>], toto}],
-                 lists:sort(emqb_topic_tree:match(FoldFun, [], <<"foo/bar">>, T6))),
-    ?assertEqual([{[<<"foo">>, <<"bar">>, <<"boz">>], tata},
-                  {[<<"foo">>, <<"biz">>, <<"boz">>], tutu}],
-                 lists:sort(emqb_topic_tree:match(FoldFun, [], <<"foo/+/boz">>, T6))),
-    ?assertEqual([{[<<"foo">>, <<"biz">>, <<"boz">>, <<"">>], tete}],
-                 lists:sort(emqb_topic_tree:match(FoldFun, [], <<"foo/+/boz/">>, T6))),
-    ?assertEqual([{[<<"foo">>], titi}],
-                 lists:sort(emqb_topic_tree:match(FoldFun, [], <<"+">>, T6))),
-    ?assertEqual([{[<<"foo">>, <<"biz">>, <<"boz">>], tutu},
-                 {[<<"foo">>, <<"biz">>, <<"boz">>, <<"">>], tete}],
-                 lists:sort(emqb_topic_tree:match(FoldFun, [], <<"foo/biz/#">>, T6))),
+    ?assertEqual(lists:sort(emqb_topic_tree:fold(?FOLD_FUN, [], T6)),
+                 lists:sort(emqb_topic_tree:match(?FOLD_FUN, [], <<"#">>, T6))),
+    ?assertTreeMatch(T6, <<"foo/bar">>, [
+        {[<<"foo">>, <<"bar">>], toto}]),
+    ?assertTreeMatch(T6, <<"foo/+/boz">>, [
+        {[<<"foo">>, <<"bar">>, <<"boz">>], tata},
+        {[<<"foo">>, <<"biz">>, <<"boz">>], tutu}]),
+    ?assertTreeMatch(T6, <<"foo/+/boz/">>, [
+        {[<<"foo">>, <<"biz">>, <<"boz">>, <<"">>], tete}]),
+    ?assertTreeMatch(T6, <<"+">>, [
+        {[<<"foo">>], titi}]),
+    ?assertTreeMatch(T6, <<"foo/biz/#">>, [
+        {[<<"foo">>, <<"biz">>, <<"boz">>], tutu},
+        {[<<"foo">>, <<"biz">>, <<"boz">>, <<"">>], tete}]),
 
     T7 = emqb_topic_tree:remove(<<"foo/biz/boz/">>, T6),
     ?assertEqual(4, emqb_topic_tree:size(T7)),
-    ?assertEqual({ok, titi}, emqb_topic_tree:find(<<"foo">>, T7)),
-    ?assertEqual({ok, toto}, emqb_topic_tree:find(<<"foo/bar">>, T7)),
-    ?assertEqual({ok, tata}, emqb_topic_tree:find(<<"foo/bar/boz">>, T7)),
-    ?assertEqual({ok, tutu}, emqb_topic_tree:find(<<"foo/biz/boz">>, T7)),
-    ?assertEqual(error, emqb_topic_tree:find(<<"foo/biz/boz/">>, T7)),
+    ?assertTreeFind(T7, <<"foo">>, {ok, titi}),
+    ?assertTreeFind(T7, <<"foo/bar">>, {ok, toto}),
+    ?assertTreeFind(T7, <<"foo/bar/boz">>, {ok, tata}),
+    ?assertTreeFind(T7, <<"foo/biz/boz">>, {ok, tutu}),
+    ?assertTreeFind(T7, <<"foo/biz/boz/">>, error),
 
-    ?assertEqual([{[<<"foo">>], titi},
-                  {[<<"foo">>, <<"bar">>], toto},
-                  {[<<"foo">>, <<"bar">>, <<"boz">>], tata},
-                  {[<<"foo">>, <<"biz">>, <<"boz">>], tutu}],
-                 lists:sort(emqb_topic_tree:fold(FoldFun, [], T7))),
+    ?assertTreeFold(T7, [
+        {[<<"foo">>], titi},
+        {[<<"foo">>, <<"bar">>], toto},
+        {[<<"foo">>, <<"bar">>, <<"boz">>], tata},
+        {[<<"foo">>, <<"biz">>, <<"boz">>], tutu}]),
 
     T8 = emqb_topic_tree:remove(<<"foo">>, T7),
     ?assertEqual(3, emqb_topic_tree:size(T8)),
-    ?assertEqual(error, emqb_topic_tree:find(<<"foo">>, T8)),
-    ?assertEqual({ok, toto}, emqb_topic_tree:find(<<"foo/bar">>, T8)),
-    ?assertEqual({ok, tata}, emqb_topic_tree:find(<<"foo/bar/boz">>, T8)),
-    ?assertEqual({ok, tutu}, emqb_topic_tree:find(<<"foo/biz/boz">>, T8)),
-    ?assertEqual(error, emqb_topic_tree:find(<<"foo/biz/boz/">>, T8)),
+    ?assertTreeFind(T8, <<"foo">>, error),
+    ?assertTreeFind(T8, <<"foo/bar">>, {ok, toto}),
+    ?assertTreeFind(T8, <<"foo/bar/boz">>, {ok, tata}),
+    ?assertTreeFind(T8, <<"foo/biz/boz">>, {ok, tutu}),
+    ?assertTreeFind(T8, <<"foo/biz/boz/">>, error),
 
-    ?assertEqual([{[<<"foo">>, <<"bar">>], toto},
-                  {[<<"foo">>, <<"bar">>, <<"boz">>], tata},
-                  {[<<"foo">>, <<"biz">>, <<"boz">>], tutu}],
-                 lists:sort(emqb_topic_tree:fold(FoldFun, [], T8))),
+    ?assertTreeFold(T8, [
+        {[<<"foo">>, <<"bar">>], toto},
+        {[<<"foo">>, <<"bar">>, <<"boz">>], tata},
+        {[<<"foo">>, <<"biz">>, <<"boz">>], tutu}]),
 
     T9 = emqb_topic_tree:remove(<<"foo/biz/boz">>, T8),
     ?assertEqual(2, emqb_topic_tree:size(T9)),
-    ?assertEqual(error, emqb_topic_tree:find(<<"foo">>, T9)),
-    ?assertEqual({ok, toto}, emqb_topic_tree:find(<<"foo/bar">>, T9)),
-    ?assertEqual({ok, tata}, emqb_topic_tree:find(<<"foo/bar/boz">>, T9)),
-    ?assertEqual(error, emqb_topic_tree:find(<<"foo/biz/boz">>, T9)),
-    ?assertEqual(error, emqb_topic_tree:find(<<"foo/biz/boz/">>, T9)),
+    ?assertTreeFind(T9, <<"foo">>, error),
+    ?assertTreeFind(T9, <<"foo/bar">>, {ok, toto}),
+    ?assertTreeFind(T9, <<"foo/bar/boz">>, {ok, tata}),
+    ?assertTreeFind(T9, <<"foo/biz/boz">>, error),
+    ?assertTreeFind(T9, <<"foo/biz/boz/">>, error),
 
-    ?assertEqual([{[<<"foo">>, <<"bar">>], toto},
-                  {[<<"foo">>, <<"bar">>, <<"boz">>], tata}],
-                 lists:sort(emqb_topic_tree:fold(FoldFun, [], T9))),
+    ?assertTreeFold(T9, [
+        {[<<"foo">>, <<"bar">>], toto},
+        {[<<"foo">>, <<"bar">>, <<"boz">>], tata}]),
 
     T10 = emqb_topic_tree:remove(<<"foo/bar">>, T9),
     ?assertEqual(1, emqb_topic_tree:size(T10)),
-    ?assertEqual(error, emqb_topic_tree:find(<<"foo">>, T10)),
-    ?assertEqual(error, emqb_topic_tree:find(<<"foo/bar">>, T10)),
-    ?assertEqual({ok, tata}, emqb_topic_tree:find(<<"foo/bar/boz">>, T10)),
-    ?assertEqual(error, emqb_topic_tree:find(<<"foo/biz/boz">>, T10)),
-    ?assertEqual(error, emqb_topic_tree:find(<<"foo/biz/boz/">>, T10)),
+    ?assertTreeFind(T10, <<"foo">>, error),
+    ?assertTreeFind(T10, <<"foo/bar">>, error),
+    ?assertTreeFind(T10, <<"foo/bar/boz">>, {ok, tata}),
+    ?assertTreeFind(T10, <<"foo/biz/boz">>, error),
+    ?assertTreeFind(T10, <<"foo/biz/boz/">>, error),
 
     ?assertEqual(T10, emqb_topic_tree:remove(<<"foo/bar/">>, T10)),
 
-    ?assertEqual([{[<<"foo">>, <<"bar">>, <<"boz">>], tata}],
-                 lists:sort(emqb_topic_tree:fold(FoldFun, [], T10))),
+    ?assertTreeFold(T10, [
+        {[<<"foo">>, <<"bar">>, <<"boz">>], tata}]),
 
     T11 = emqb_topic_tree:remove(<<"foo/bar/boz">>, T10),
     ?assertEqual(0, emqb_topic_tree:size(T11)),
-    ?assertEqual(error, emqb_topic_tree:find(<<"foo">>, T11)),
-    ?assertEqual(error, emqb_topic_tree:find(<<"foo/bar">>, T11)),
-    ?assertEqual(error, emqb_topic_tree:find(<<"foo/bar/boz">>, T11)),
-    ?assertEqual(error, emqb_topic_tree:find(<<"foo/biz/boz">>, T11)),
-    ?assertEqual(error, emqb_topic_tree:find(<<"foo/biz/boz/">>, T11)),
+    ?assertTreeFind(T11, <<"foo">>, error),
+    ?assertTreeFind(T11, <<"foo/bar">>, error),
+    ?assertTreeFind(T11, <<"foo/bar/boz">>, error),
+    ?assertTreeFind(T11, <<"foo/biz/boz">>, error),
+    ?assertTreeFind(T11, <<"foo/biz/boz/">>, error),
 
-    ?assertEqual([], lists:sort(emqb_topic_tree:fold(FoldFun, [], T11))),
+    ?assertTreeFold(T11, []),
 
+    ok.
+
+resolve_test(_Config) ->
+    Patterns = [
+        {<<"foo">>, data1},
+        {<<"+">>, data2},
+        {<<"bar/#">>, data3},
+        {<<"buz/+/boz">>, data4},
+        {<<"biz/+/boz/bez">>, data5},
+        {<<"biz/+/boz/+">>, data6}
+    ],
+
+    T = lists:foldl(fun({P, D}, T) ->
+        emqb_topic_tree:update(P, D, T)
+    end, emqb_topic_tree:new(), Patterns),
+
+    ?assertEqual(6, emqb_topic_tree:size(T)),
+    ?assertTreeFind(T, <<"foo">>, {ok, data1}),
+    ?assertTreeFind(T, <<"+">>, {ok, data2}),
+    ?assertTreeFind(T, <<"bar/#">>, {ok, data3}),
+    ?assertTreeFind(T, <<"buz/+/boz">>, {ok, data4}),
+    ?assertTreeFind(T, <<"biz/+/boz/bez">>, {ok, data5}),
+    ?assertTreeFind(T, <<"biz/+/boz/+">>, {ok, data6}),
+
+    ?assertEqual(lists:sort([{emqb_topic:parse(A), B} || {A, B} <- Patterns]),
+                 lists:sort(emqb_topic_tree:fold(?FOLD_FUN, [], T))),
+
+    ?assertTreeResolve(T, <<"foo">>, [
+        {[<<"foo">>], data1},
+        {[$+], data2}]),
+    ?assertTreeResolve(T, <<"toto">>, [
+        {[$+], data2}]),
+    ?assertTreeResolve(T, <<"foo/bar">>, []),
+    ?assertTreeResolve(T, <<"bar">>, [
+        {[$+], data2}]),
+    ?assertTreeResolve(T, <<"bar/toto">>, [
+        {[<<"bar">>, $#], data3}]),
+    ?assertTreeResolve(T, <<"bar/toto/tata">>, [
+        {[<<"bar">>, $#], data3}]),
+    ?assertTreeResolve(T, <<"buz/tata">>, []),
+    ?assertTreeResolve(T, <<"buz/tata/boz">>, [
+        {[<<"buz">>, $+, <<"boz">>], data4}]),
+    ?assertTreeResolve(T, <<"buz/tata/boz/bez">>, []),
+    ?assertTreeResolve(T, <<"biz/tata/boz/bez">>, [
+        {[<<"biz">>, $+, <<"boz">>, <<"bez">>], data5},
+        {[<<"biz">>, $+, <<"boz">>, $+], data6}]),
+    ?assertTreeResolve(T, <<"biz/tata/boz/toto">>, [
+        {[<<"biz">>, $+, <<"boz">>, $+], data6}]),
     ok.
