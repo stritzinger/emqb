@@ -748,9 +748,12 @@ publish_internal(Owner, TopicPath, Props, Payload, PubOpts) ->
     % of all the clients with matching patterns. After the creation, the
     % registry will contains all the subscriptions information to send the
     % message directly to the owners of the clients without calling the topics.
+    % We still want to send an asynchronous message to the topic process in
+    % order to keep it alive.
     case emqb_manager:topic(TopicPath) of
         {error, Reason} -> {error, Reason};
-        {ok, _TopicPid} ->
+        {ok, TopicPid} ->
+            emqb_topic:keep_alive(TopicPid),
             PubQoS = opt_qos(PubOpts),
             FilteredProps = maps:with([
                 'Payload-Format-Indicator',

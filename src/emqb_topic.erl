@@ -40,6 +40,7 @@
 -export([subscribe/2]).
 -export([unsubscribe/2]).
 -export([publish/4]).
+-export([keep_alive/1]).
 
 % Behaviour gen_server callback functions
 -export([init/1]).
@@ -71,9 +72,10 @@
 
 %%% MACROS %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-% Time without any published message after which a topic without any subscribers
-% will be shutdown.
--define(INACTIVITY_TIMOUT, 60000).
+% Time without any activity after which the topic is stopped.
+% Stopping a topic process is harmless, as it will be restarted when
+% a message is published, and the clients will re-suscribe automatically.
+-define(INACTIVITY_TIMOUT, (5 * 60 * 1000)). % 5 minutes
 
 
 %%% API FUNCTIONS %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -129,6 +131,10 @@ unsubscribe(TopicPid, SubRef) ->
 publish(TopicPid, Properties, Payload, Opts) ->
     gen_server:call(TopicPid, {publish, Properties, Payload, Opts}).
 
+-spec keep_alive(pid()) -> ok.
+keep_alive(TopicPid) ->
+    gen_server:cast(TopicPid, keep_alive).
+
 
 %%% BEHAVIOUR gen_server CALLBACK FUNCTIONS %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
@@ -162,6 +168,8 @@ handle_call(Request, From, State) ->
     ?LOG_WARNING("Unexpected call ~p from ~p", [Request, From]),
     {reply, {error, unexpected_call}, State, ?INACTIVITY_TIMOUT}.
 
+handle_cast(keep_alive, State) ->
+    {noreply, State, ?INACTIVITY_TIMOUT};
 handle_cast(Msg, State) ->
     ?LOG_WARNING("Unexpected cast ~p", [Msg]),
     {noreply, State, ?INACTIVITY_TIMOUT}.
