@@ -12,12 +12,12 @@ get back.
 
 Could be used in multiple mode:
 
- - internal : All the messages are only local to the VM. This allow multiple
+ - `internal` : All the messages are only local to the VM. This allow multiple
    erlang services in a same VM to use MQTT topics between them without any
    external MQTT broker.
- - external : All the messages are sent exclusively to an external MQTT broker.
+ - `external` : All the messages are sent exclusively to an external MQTT broker.
    There is no much difference between this mode and using `emqtt` directly.
- - hybride : In this mode, the messages are sent both internally and to the
+ - `hybride` : In this mode, the messages are sent both internally and to the
    external broker. The messages are taged with an instance identifier so they
    are filtered out when comming back to the VM. This allows all the services
    in the VM to comunicate directly while any external services using the same
@@ -76,13 +76,14 @@ Tests
 
 To run the tests that needs a real MQTT broker, the following environment
 variables may be set:
-    - `MQTT_BROKER_HOST`: If not set "localhost" is assumed.
-    - `MQTT_BROKER_PORT`: If not set, 1883 is assumed.
-    - `MQTT_BROKER_USERNAME`: If not set, no authentication is done.
-    - `MQTT_BROKER_PASSWORD`: If not set, no authentication is done.
+
+  - `MQTT_BROKER_HOST`: If not set "localhost" is assumed.
+  - `MQTT_BROKER_PORT`: If not set, 1883 is assumed.
+  - `MQTT_BROKER_USERNAME`: If not set, no authentication is done.
+  - `MQTT_BROKER_PASSWORD`: If not set, no authentication is done.
 
 Then you can run the tests with:
 
     $ rebar3 ct
 
-And see the report in ` _build/test/logs/last/index.html`.
+And see the report in `_build/test/logs/last/index.html`.
