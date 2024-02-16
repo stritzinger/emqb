@@ -28,6 +28,8 @@ Only supports MQTT version 5 brokers.
 Currently not supporting QoS 2 and QoS 1 is pretty much simulated when
 messages are delivered internally.
 
+Currently not supporting retained messages internally.
+
 Implement automatic reconnection to the broker, with exponential backoff.
 
 

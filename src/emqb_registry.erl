@@ -27,6 +27,7 @@
 %%% INCLUDES %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 -include_lib("kernel/include/logger.hrl").
+-include("emqb_internal.hrl").
 
 
 %%% EXPORTS %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -37,6 +38,9 @@
 -export([match_topics/1]).
 -export([register_client/1]).
 -export([register_topic/2]).
+-export([add_subscriptions/2]).
+-export([del_subscriptions/2]).
+-export([get_subscriptions/1]).
 
 % Behaviour gen_server callback functions
 -export([init/1]).
@@ -69,7 +73,8 @@
 %%% MACROS %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 -define(SERVER, ?MODULE).
--define(TOPIC_TABLE, emqb_topic_table).
+-define(TOPIC_TABLE, emqb_topics).
+-define(SUBSCRIPTION_TABLE, emqb_subscriptions).
 
 
 %%% API FUNCTIONS %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -92,15 +97,34 @@ match_topics(TopicPattern) ->
 register_client(ClientPid) ->
     gen_server:call(?SERVER, {register_client, ClientPid}).
 
--spec register_topic(pid(), emqb_topic:path()) -> ok.
+-spec register_topic(pid(), emqb_topic:path()) -> [topic_subscription()].
 register_topic(TopicPid, TopicPath) ->
     gen_server:call(?SERVER, {register_topic, TopicPid, TopicPath}).
+
+-spec add_subscriptions(emqb_topic:path(), topic_subscription() | [topic_subscription()]) -> ok.
+add_subscriptions(TopicPath, Subscriptions) ->
+    gen_server:call(?SERVER, {add_subscriptions, TopicPath, Subscriptions}).
+
+-spec del_subscriptions(emqb_topic:path(), reference() | [reference()]) -> ok.
+del_subscriptions(TopicPath, SubRefs) ->
+    gen_server:call(?SERVER, {del_subscriptions, TopicPath, SubRefs}).
+
+-spec get_subscriptions(emqb_topic:path()) -> #{reference => topic_subscription()}.
+get_subscriptions(TopicPath) ->
+    try ets:lookup(?SUBSCRIPTION_TABLE, TopicPath) of
+        [{_TopicPath, Subscriptions}] -> Subscriptions;
+        [] -> #{}
+    catch
+        %% Case where the table does not exist yet.
+        error:badarg -> #{}
+    end.
 
 
 %%% BEHAVIOUR gen_server CALLBACK FUNCTIONS %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 init([]) ->
     ets:new(?TOPIC_TABLE, [protected, named_table, set, {read_concurrency, true}]),
+    ets:new(?SUBSCRIPTION_TABLE, [protected, named_table, set, {read_concurrency, true}]),
     {ok, #state{topics = emqb_topic_tree:new()}}.
 
 handle_call({match_topics, TopicPattern}, _From,
@@ -126,10 +150,15 @@ handle_call({register_topic, TopicPid, TopicPath}, _From,
     ets:insert(?TOPIC_TABLE, {TopicPath, TopicPid}),
     NewTopicTree = emqb_topic_tree:update(TopicPath, Data, TopicTree),
     NewState = State#state{topics = NewTopicTree, monitors = NewMonitors},
-    maps:foreach(fun(ClientPid, _) ->
-        emqb_client:topic_added(ClientPid, TopicPath, TopicPid)
-    end, Clients),
-    {reply, ok, NewState};
+    Subscriptions = lists:flatten(maps:fold(fun(ClientPid, _, Acc) ->
+        [emqb_client:topic_added(ClientPid, TopicPath, TopicPid) | Acc]
+    end, [], Clients)),
+    addsub(TopicPath, Subscriptions),
+    {reply, Subscriptions, NewState};
+handle_call({add_subscriptions, TopicPath, Subscriptions}, _From, State) ->
+    {reply, addsub(TopicPath, Subscriptions), State};
+handle_call({del_subscriptions, TopicPath, SubRefs}, _From, State) ->
+    {reply, delsub(TopicPath, SubRefs), State};
 handle_call(Request, From, State) ->
     ?LOG_WARNING("Unexpected call ~p from ~p", [Request, From]),
     {reply, {error, unexpected_call}, State}.
@@ -138,7 +167,7 @@ handle_cast(Msg, State) ->
     ?LOG_WARNING("Unexpected cast ~p", [Msg]),
     {noreply, State}.
 
-handle_info({'DOWN', MonRef, process, TopicPid, _Reason},
+handle_info({'DOWN', MonRef, process, _TopicPid, _Reason},
             State = #state{topics = TopicTree, clients = Clients,
                            monitors = Monitors}) ->
     case maps:take(MonRef, Monitors) of
@@ -149,9 +178,10 @@ handle_info({'DOWN', MonRef, process, TopicPid, _Reason},
             NewTopicTree = emqb_topic_tree:remove(TopicPath, TopicTree),
             NewState = State#state{topics = NewTopicTree,
                                    monitors = NewMonitors},
-            maps:foreach(fun(ClientPid, _) ->
-                emqb_client:topic_removed(ClientPid, TopicPath, TopicPid)
-            end, Clients),
+            SubRefs = lists:flatten(maps:fold(fun(ClientPid, _, Acc) ->
+                [emqb_client:topic_removed(ClientPid, TopicPath) | Acc]
+            end, [], Clients)),
+            delsub(TopicPath, SubRefs),
             {noreply, NewState};
         {#client_data{pid = ClientPid}, NewMonitors} ->
             % Client process died
@@ -165,4 +195,51 @@ handle_info(Info, State) ->
     {noreply, State}.
 
 terminate(_Reason, _State) ->
+    ok.
+
+
+%%% INTERNAL FUNCTION %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+addsub(TopicPath, #topic_subscription{ref = SubRef} = Sub) ->
+    case ets:lookup(?SUBSCRIPTION_TABLE, TopicPath) of
+        [{_TopicPath, CurrSubs}] ->
+            NewSubs = CurrSubs#{SubRef => Sub},
+            ets:insert(?SUBSCRIPTION_TABLE, {TopicPath, NewSubs});
+        [] ->
+            ets:insert(?SUBSCRIPTION_TABLE, {TopicPath, #{SubRef => Sub}})
+    end,
+    ok;
+addsub(TopicPath, Subs) when is_list(Subs) ->
+    SubMap = maps:from_list([{R, S} || #topic_subscription{ref = R} = S <- Subs]),
+    case ets:lookup(?SUBSCRIPTION_TABLE, TopicPath) of
+        [{_TopicPath, CurrSubs}] ->
+            ets:insert(?SUBSCRIPTION_TABLE, {TopicPath, maps:merge(CurrSubs, SubMap)});
+        [] ->
+            ets:insert(?SUBSCRIPTION_TABLE, {TopicPath, SubMap})
+    end,
+    ok.
+
+delsub(TopicPath, SubRef) when is_reference(SubRef) ->
+    case ets:lookup(?SUBSCRIPTION_TABLE, TopicPath) of
+        [{_TopicPath, CurrSubs}] ->
+            case maps:remove(SubRef, CurrSubs) of
+                NewSubs when map_size(NewSubs) =:= 0 ->
+                    ets:delete(?SUBSCRIPTION_TABLE, TopicPath);
+                NewSubs ->
+                    ets:insert(?SUBSCRIPTION_TABLE, {TopicPath, NewSubs})
+            end;
+        [] -> true
+    end,
+    ok;
+delsub(TopicPath, SubRefs) when is_list(SubRefs) ->
+    case ets:lookup(?SUBSCRIPTION_TABLE, TopicPath) of
+        [{_TopicPath, CurrSubs}] ->
+            case maps:without(SubRefs, CurrSubs) of
+                NewSubs when map_size(NewSubs) =:= 0 ->
+                    ets:delete(?SUBSCRIPTION_TABLE, TopicPath);
+                NewSubs ->
+                    ets:insert(?SUBSCRIPTION_TABLE, {TopicPath, NewSubs})
+            end;
+        [] -> true
+    end,
     ok.

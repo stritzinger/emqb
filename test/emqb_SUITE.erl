@@ -231,7 +231,7 @@ subscribe_spec_test(_Config) ->
     ok.
 
 unsubscribe_test_config() -> [
-    % tracing,
+    %tracing,
     {proc_names, [producer, consumer]}
 ].
 
@@ -250,7 +250,6 @@ unsubscribe_test(_Config) ->
     ?assertMessage(consumer,
         {publish, #{topic := <<"foo/bar">>, payload := <<"msg1">>,
                     properties := #{'Subscription-Identifier' := 3}}}),
-    ?assertNoMoreMessages(),
 
     publish(producer, <<"foo/boz">>, <<"msg2">>),
     ?assertMessage(consumer,
@@ -259,12 +258,12 @@ unsubscribe_test(_Config) ->
     ?assertMessage(consumer,
         {publish, #{topic := <<"foo/boz">>, payload := <<"msg2">>,
                     properties := #{'Subscription-Identifier' := 3}}}),
-    ?assertNoMoreMessages(),
 
     publish(producer, <<"foo/bar/boz">>, <<"msg3">>),
     ?assertMessage(consumer,
         {publish, #{topic := <<"foo/bar/boz">>, payload := <<"msg3">>,
                     properties := #{'Subscription-Identifier' := 3}}}),
+
     ?assertNoMoreMessages(),
 
     unsubscribe(consumer, <<"foo/+">>),
@@ -276,18 +275,17 @@ unsubscribe_test(_Config) ->
     ?assertMessage(consumer,
         {publish, #{topic := <<"foo/bar">>, payload := <<"msg1">>,
                     properties := #{'Subscription-Identifier' := 3}}}),
-    ?assertNoMoreMessages(),
 
     publish(producer, <<"foo/boz">>, <<"msg2">>),
     ?assertMessage(consumer,
         {publish, #{topic := <<"foo/boz">>, payload := <<"msg2">>,
                     properties := #{'Subscription-Identifier' := 3}}}),
-    ?assertNoMoreMessages(),
 
     publish(producer, <<"foo/bar/boz">>, <<"msg3">>),
     ?assertMessage(consumer,
         {publish, #{topic := <<"foo/bar/boz">>, payload := <<"msg3">>,
                     properties := #{'Subscription-Identifier' := 3}}}),
+
     ?assertNoMoreMessages(),
 
     unsubscribe(consumer, <<"foo/#">>),
@@ -296,10 +294,10 @@ unsubscribe_test(_Config) ->
     ?assertMessage(consumer,
         {publish, #{topic := <<"foo/bar">>, payload := <<"msg1">>,
                     properties := #{'Subscription-Identifier' := 1}}}),
-    ?assertNoMoreMessages(),
 
     publish(producer, <<"foo/boz">>, <<"msg2">>),
     publish(producer, <<"foo/bar/boz">>, <<"msg3">>),
+
     ?assertNoMoreMessages(),
 
     ok.

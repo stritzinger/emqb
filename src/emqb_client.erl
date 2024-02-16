@@ -33,6 +33,7 @@
 
 -include_lib("kernel/include/logger.hrl").
 -include_lib("emqtt/include/emqtt.hrl").
+-include("emqb_internal.hrl").
 
 
 %%% EXPORTS %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -46,10 +47,10 @@
 
 % Registry notification functions
 -export([topic_added/3]).
--export([topic_removed/3]).
+-export([topic_removed/2]).
 
 % Topic notification functions
--export([dispatch/5]).
+-export([dispatch/6]).
 
 % Behaviour gen_statem callback functions
 -export([init/1]).
@@ -66,14 +67,6 @@
 %%% TYPES %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 -opaque client() :: {pid(), pid(), emqb:mode()}.
-
--record(subscription_data, {
-        ref :: reference(),
-        pattern :: emqb_topic:path(),
-        subid :: undefined | pos_integer(),
-        qos :: ?QOS_0 | ?QOS_1,
-        topics = #{} :: #{emqb_topic:path() => pid()}
-}).
 
 -record(data, {
     name :: atom(),
@@ -100,8 +93,9 @@
     connected = false :: boolean(),
     client_mon :: undefined | reference(),
     conn_props = #{} :: emqtt:properties(),
-    subscriptions = #{} :: #{reference() => #subscription_data{}},
-    topics :: emqb_topic_tree:topic_tree(reference())
+    subscriptions = #{} :: #{reference() => topic_subscription()},
+    patterns :: emqb_topic_tree:topic_tree(reference()),
+    topics = #{} :: #{reference => #{emqb_topic:path() => pid()}}
 }).
 
 % Change to use emqtt:subopt() when supporting QoS 2
@@ -145,7 +139,7 @@ subscribe({ClientPid, _Owner, _Mode}, Properties, TopicSpec)
     gen_statem:call(ClientPid, {subscribe, Properties, ParsedTopicSpec}).
 
 -spec unsubscribe(client(), emqtt:properties(), [emqtt:topic()])
-    -> amqb:subscribe_ret().
+    -> emqb:subscribe_ret().
 unsubscribe({ClientPid, _Owner, _Mode}, Properties, Topics)
   when is_map(Properties), is_list(Topics) ->
     ParsedTopics = [{T, emqb_topic:parse(T)} || T <- Topics],
@@ -195,23 +189,22 @@ puback({ClientPid, _Owner, _Mode}, PacketId, ReasonCode, Properties)
 
 %%% REGISTRY NOTIFICATION FUNCTIONS %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-% This function needs to be synchronous to be sure the client subscribe to the
-% new created topic before the first message triggering the creation is
-% published.
--spec topic_added(pid(), emqb_topic:path(), pid()) -> ok.
+-spec topic_added(pid(), emqb_topic:path(), pid()) -> [topic_subscription()].
 topic_added(ClientPid, TopicPath, TopicPid) ->
     gen_statem:call(ClientPid, {topic_added, TopicPath, TopicPid}).
 
--spec topic_removed(pid(), emqb_topic:path(), pid()) -> ok.
-topic_removed(ClientPid, TopicPath, TopicPid) ->
-    gen_statem:call(ClientPid, {topic_removed, TopicPath, TopicPid}).
+-spec topic_removed(pid(), emqb_topic:path()) -> [reference()].
+topic_removed(ClientPid, TopicPath) ->
+    gen_statem:call(ClientPid, {topic_removed, TopicPath}).
 
 
 %%% TOPIC NOTIFICATION FUNCTIONS %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
--spec dispatch(pid(), reference(), emqtt:properties(), embq_topic:path(), term()) -> ok.
-dispatch(ClientPid, SubRef, Props, TopicPath, Payload) ->
-    gen_statem:cast(ClientPid, {dispatch, SubRef, Props, TopicPath, Payload}).
+-spec dispatch(pid(), reference(), emqtt:properties(), embq_topic:path(),
+               term(), [pubopt()]) -> ok.
+dispatch(ClientPid, SubRef, Props, TopicPath, Payload, PubOpts) ->
+    Msg = {dispatch, SubRef, Props, TopicPath, Payload, PubOpts},
+    gen_statem:cast(ClientPid, Msg).
 
 
 %%% BEHAVIOUR gen_statem CALLBACK FUNCTIONS %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -221,7 +214,7 @@ init([Opts]) ->
     % embq only support MQTT v5
     Data = init(Opts, #data{
         emqtt_opts = [{proto_ver, v5}],
-        topics = emqb_topic_tree:new()
+        patterns = emqb_topic_tree:new()
     }),
     {StartMqtt, Register, InitialState} = case Data#data.mode of
         internal -> {false, true, internal_mode};
@@ -406,17 +399,18 @@ hybride_mode({call, From}, {publish_external, Topic, Properties, Payload, Opts},
             {keep_state, Data2, [{reply, From, {ok, PacketId}}]}
     end;
 hybride_mode({call, From}, {topic_added, TopicPath, TopicPid}, Data) ->
-    Data2 = topic_added_internal(Data, TopicPath, TopicPid),
-    {keep_state, Data2, [{reply, From, ok}]};
-hybride_mode({call, From}, {topic_removed, TopicPath, TopicPid}, Data) ->
-    Data2 = topic_removed_internal(Data, TopicPath, TopicPid),
-    {keep_state, Data2, [{reply, From, ok}]};
+    {Data2, Subs} = topic_added_internal(Data, TopicPath, TopicPid),
+    {keep_state, Data2, [{reply, From, Subs}]};
+hybride_mode({call, From}, {topic_removed, TopicPath}, Data) ->
+    {Data2, Refs} = topic_removed_internal(Data, TopicPath),
+    {keep_state, Data2, [{reply, From, Refs}]};
 hybride_mode(cast, {send_puback, PacketId, ReasonCode, Properties}, Data)
   when is_integer(PacketId) ->
     % PUBACK for a broker-generated packet identifier
     {keep_state, puback_external(Data, PacketId, ReasonCode, Properties)};
-hybride_mode(cast, {dispatch, SubRef, Props, TopicPath, Payload}, Data) ->
-    {keep_state, dispatch_internal(Data, SubRef, TopicPath, Props, Payload)};
+hybride_mode(cast, {dispatch, SubRef, Props, TopicPath, Payload, PubOpts}, Data) ->
+    {keep_state, dispatch_internal(Data, SubRef, TopicPath,
+                                   Props, Payload, PubOpts)};
 hybride_mode(info, {disconnected, ReasonCode, _Properties}, Data) ->
     %TODO: Extract relevent information from the properties if available.
     ?LOG_WARNING("Got disconnected from the MQTT broker: ~s",
@@ -448,13 +442,14 @@ internal_mode({call, From}, {unsubscribe, Properties, Topics}, Data) ->
     {ResProps, ResCodes, Data2} = unsubscribe_internal(Data, Properties, Topics),
     {keep_state, Data2, [{reply, From, {ok, ResProps, ResCodes}}]};
 internal_mode({call, From}, {topic_added, TopicPath, TopicPid}, Data) ->
-    Data2 = topic_added_internal(Data, TopicPath, TopicPid),
-    {keep_state, Data2, [{reply, From, ok}]};
-internal_mode({call, From}, {topic_removed, TopicPath, TopicPid}, Data) ->
-    Data2 = topic_removed_internal(Data, TopicPath, TopicPid),
-    {keep_state, Data2, [{reply, From, ok}]};
-internal_mode(cast, {dispatch, SubRef, Props, TopicPath, Payload}, Data) ->
-    {keep_state, dispatch_internal(Data, SubRef, TopicPath, Props, Payload)};
+    {Data2, Subs} = topic_added_internal(Data, TopicPath, TopicPid),
+    {keep_state, Data2, [{reply, From, Subs}]};
+internal_mode({call, From}, {topic_removed, TopicPath}, Data) ->
+    {Data2, Refs} = topic_removed_internal(Data, TopicPath),
+    {keep_state, Data2, [{reply, From, Refs}]};
+internal_mode(cast, {dispatch, SubRef, Props, TopicPath, Payload, PubOpts}, Data) ->
+    {keep_state, dispatch_internal(Data, SubRef, TopicPath, Props,
+                                   Payload, PubOpts)};
 internal_mode(EventType, EventContent, Data) ->
     handle_event(EventType, EventContent, internal_mode, Data).
 
@@ -749,11 +744,29 @@ puback_external(Data, PacketId, ReasonCode, Properties) ->
 
 %% Will be called from the process calling emqb_client:publish/5
 publish_internal(Owner, TopicPath, Props, Payload, PubOpts) ->
+    % The topic process need to be created, as it triggers the subscription
+    % of all the clients with matching patterns. After the creation, the
+    % registry will contains all the subscriptions information to send the
+    % message directly to the owners of the clients without calling the topics.
     case emqb_manager:topic(TopicPath) of
         {error, Reason} -> {error, Reason};
-        {ok, TopicPid} ->
-            Dispatched = emqb_topic:publish(TopicPid, Props, Payload, PubOpts),
-            case opt_qos(PubOpts) of
+        {ok, _TopicPid} ->
+            PubQoS = opt_qos(PubOpts),
+            FilteredProps = maps:with([
+                'Payload-Format-Indicator',
+                'Message-Expiry-Interval',
+                'Content-Type',
+                'Response-Topic',
+                'Correlation-Data',
+                'User-Property'
+            ], Props),
+            Subscriptions = emqb_registry:get_subscriptions(TopicPath),
+            Dispatched = maps:fold(fun(_, SubData, _) ->
+                dispatch_internal(SubData, TopicPath, FilteredProps,
+                                  Payload, PubOpts),
+                true
+            end, false, Subscriptions),
+            case PubQoS of
                 ?QOS_0 ->
                     {ok, Dispatched, undefined};
                 ?QOS_1 ->
@@ -771,24 +784,26 @@ subscribe_internal(Data, Properties, Topics) ->
 
 subscribe_internal(Data, _SubProps, [], ResProps, Acc) ->
     {ResProps, lists:reverse(Acc), Data};
-subscribe_internal(Data = #data{subscriptions = Subs, topics = Tree}, SubProps,
-                   [{{_, TopicPattern}, SubOpts} | Rest], ResProps, Acc) ->
+subscribe_internal(Data, SubProps, [{{_, TopicPattern}, SubOpts} | Rest], ResProps, Acc) ->
+    #data{owner = Owner, subscriptions = Subs, patterns = Tree, topics = Topics} = Data,
     SubRef = make_ref(),
     SubId = maps:get('Subscription-Identifier', SubProps, undefined),
     QoS = opt_qos(SubOpts),
     TopicPids = emqb_registry:match_topics(TopicPattern),
-    SubData = #subscription_data{
+    SubData = #topic_subscription{
         ref = SubRef,
+        client = self(),
+        owner = Owner,
         pattern = TopicPattern,
-        subid = SubId,
-        qos = QoS,
-        topics = maps:from_list(TopicPids)
+        sid = SubId,
+        qos = QoS
     },
     Subs2 = Subs#{SubRef => SubData},
     Tree2 = emqb_topic_tree:update(TopicPattern, SubRef, Tree),
-    Data2 = Data#data{subscriptions = Subs2, topics = Tree2},
+    Topics2 = Topics#{SubRef => maps:from_list(TopicPids)},
+    Data2 = Data#data{subscriptions = Subs2, patterns = Tree2, topics = Topics2},
     lists:foreach(fun({_, TopicPid}) ->
-        emqb_topic:subscribe(TopicPid, self(), SubRef)
+        emqb_topic:subscribe(TopicPid, SubData)
     end, TopicPids),
     ResCode = case QoS of
         ?QOS_0 -> ?RC_GRANTED_QOS_0;
@@ -801,46 +816,54 @@ unsubscribe_internal(Data, Properties, Topics) ->
 
 unsubscribe_internal(Data, _SubProps, [], ResProps, Acc) ->
     {ResProps, lists:reverse(Acc), Data};
-unsubscribe_internal(Data = #data{subscriptions = Subs, topics = Tree},
-                     SubProps, [{_, TopicPattern} | Rest], ResProps, Acc) ->
+unsubscribe_internal(Data, SubProps, [{_, TopicPattern} | Rest], ResProps, Acc) ->
+    #data{subscriptions = Subs, patterns = Tree, topics = Topics} = Data,
     case emqb_topic_tree:find(TopicPattern, Tree) of
         error ->
             ResCode = ?RC_NO_SUBSCRIPTION_EXISTED,
             unsubscribe_internal(Data, SubProps, Rest, ResProps, [ResCode | Acc]);
         {ok, SubRef} ->
-            #{SubRef := #subscription_data{topics = TopicMap}} = Subs,
+            #{SubRef := TopicMap} = Topics,
             Subs2 = maps:remove(SubRef, Subs),
+            Topics2 = maps:remove(SubRef, Topics),
             Tree2 = emqb_topic_tree:remove(TopicPattern, Tree),
-            Data2 = Data#data{subscriptions = Subs2, topics = Tree2},
+            Data2 = Data#data{subscriptions = Subs2, patterns = Tree2, topics = Topics2},
             maps:foreach(fun(_, TopicPid) ->
-                emqb_topic:unsubscribe(TopicPid, self(), SubRef)
+                emqb_topic:unsubscribe(TopicPid, SubRef)
             end, TopicMap),
             ResCode = ?RC_SUCCESS,
             unsubscribe_internal(Data2, SubProps, Rest, ResProps, [ResCode | Acc])
     end.
 
-dispatch_internal(Data = #data{owner = Owner, subscriptions = Subscriptions},
-                  SubRef, TopicPath, Props, Payload) ->
+dispatch_internal(Data = #data{subscriptions = Subscriptions},
+                  SubRef, TopicPath, Props, Payload, PubOpts) ->
     case maps:find(SubRef, Subscriptions) of
         error -> Data;
         {ok, SubData} ->
-            Msg = format_msg(SubData, TopicPath, Props, Payload),
-            Owner ! {publish, Msg},
+            dispatch_internal(SubData, TopicPath, Props, Payload, PubOpts),
             Data
     end.
 
-format_msg(#subscription_data{qos = QoS, subid = SubId},
-           TopicPath, Properties, Payload) ->
+%% Can be called either from the client's process or from the publisher's process
+dispatch_internal(#topic_subscription{owner = Owner} = SubData,
+                  TopicPath, Props, Payload, PubOpts) ->
+    Msg = format_msg(SubData, TopicPath, Props, Payload, PubOpts),
+    Owner ! {publish, Msg},
+    ok.
+
+format_msg(#topic_subscription{client = ClientPid, qos = QoS, sid = SubId},
+           TopicPath, Properties, Payload, PubOpts) ->
     NewProps = case SubId of
         undefined -> Properties;
         Id -> Properties#{'Subscription-Identifier' => Id}
     end,
-    case QoS of
-        ?QOS_0 -> format_msg(QoS, undefined, TopicPath, NewProps, Payload);
-        ?QOS_1 -> format_msg(QoS, make_ref(), TopicPath, NewProps, Payload)
-    end.
+    PacketId = case min(QoS, opt_qos(PubOpts)) of
+        ?QOS_0 -> undefined;
+        ?QOS_1 -> make_ref()
+    end,
+    format_msg(ClientPid, QoS, PacketId, TopicPath, NewProps, Payload).
 
-format_msg(QoS, PacketId, TopicPath, Properties, Payload) ->
+format_msg(ClientPid, QoS, PacketId, TopicPath, Properties, Payload) ->
     #{
         qos => QoS,
         dup => false,
@@ -849,36 +872,34 @@ format_msg(QoS, PacketId, TopicPath, Properties, Payload) ->
         topic => emqb_topic:format(TopicPath),
         properties => Properties,
         payload => Payload,
-        client_pid => self()
+        client_pid => ClientPid
     }.
 
-topic_added_internal(Data = #data{subscriptions = Subs, topics = Tree},
-                     TopicPath, TopicPid) ->
+topic_added_internal(Data, TopicPath, TopicPid) ->
+    #data{subscriptions = Subs, patterns = Tree, topics = Topics} = Data,
     % Get all the subscriptions that match the topic
     SubRefs = emqb_topic_tree:resolve(fun(_Pattern, SubRef, Acc) ->
         [SubRef | Acc]
     end, [], TopicPath, Tree),
-    % Then subscribe all the matching subscriptions to the new topic
-    Subs2 = lists:foldl(fun(Ref, Map) ->
-        #{Ref := #subscription_data{topics = Topics} = SubData} = Map,
-        Topics2 = Topics#{TopicPath => TopicPid},
-        SubData2 = SubData#subscription_data{topics = Topics2},
-        emqb_topic:subscribe(TopicPid, self(), Ref),
-        Map#{Ref => SubData2}
-    end, Subs, SubRefs),
-    Data#data{subscriptions = Subs2}.
+    % Then return all the subscriptions for the new topic
+    {Topics2, NewSubs} = lists:foldl(fun(Ref, {TMaps, Acc}) ->
+        #{Ref := TMap} = TMaps,
+        #{Ref := SubData} = Subs,
+        TMaps2 = TMaps#{Ref => TMap#{TopicPath => TopicPid}},
+        {TMaps2, [SubData | Acc]}
+    end, {Topics, []}, SubRefs),
+    {Data#data{topics = Topics2}, NewSubs}.
 
-topic_removed_internal(Data = #data{subscriptions = Subs, topics = Tree},
-                       TopicPath, _TopicPid) ->
+topic_removed_internal(Data, TopicPath) ->
+    #data{patterns = Tree, topics = Topics} = Data,
     % Get all the subscriptions that match the topic
     SubRefs = emqb_topic_tree:resolve(fun(_Pattern, SubRef, Acc) ->
         [SubRef | Acc]
     end, [], TopicPath, Tree),
-    % Then remove the topic from the matching subscriptions
-    Subs2 = lists:foldl(fun(Ref, Map) ->
-        #{Ref := #subscription_data{topics = Topics} = SubData} = Map,
-        Topics2 = maps:remove(TopicPath, Topics),
-        SubData2 = SubData#subscription_data{topics = Topics2},
-        Map#{Ref => SubData2}
-    end, Subs, SubRefs),
-    Data#data{subscriptions = Subs2}.
+    % Then return all the reference for the subscriptions to be removed
+    {Topics2, OldRefs} = lists:foldl(fun(Ref, {TMaps, Acc}) ->
+        #{Ref := TMap} = TMaps,
+        TMaps2 = #{Ref => maps:remove(TopicPath, TMap)},
+        {TMaps2, [Ref | Acc]}
+    end, {Topics, []}, SubRefs),
+    {Data#data{topics = Topics2}, OldRefs}.

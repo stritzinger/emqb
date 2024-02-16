@@ -165,18 +165,18 @@
 
 %%% API FUNCTIONS %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-%% @doc Starts a amqb client.
-%% Same as `amqb:start_link(#{})'.
+%% @doc Starts a emqb client.
+%% Same as `emqb:start_link(#{})'.
 -spec start_link() -> gen_statem:start_ret().
 start_link() ->
     emqb_client:start_link([]).
 
-%% @doc Starts a amqb client.
+%% @doc Starts a emqb client.
 %% <p>This does <b>NOT</b> return a simple PID, it returns an opaque data
 %% structure. It means that this cannot be called by a supervidor.
 %% Options are the same as <c>emqtt</c> minus the protocol version, as
 %% <c>emqb</c> only supports MQTT version 5.</p>
-%% <p>The extra possible options specific to <c>emqbq</c> are:
+%% <p>The extra possible options specific to <c>emqb</c> are:
 %% <ul>
 %%     <li><c>mode</c>: the startup mode of the MQTT bridge, <c>external</c>,
 %%       <c>internal</c> or <c>hybride</c>. In internal mode, the bridge will

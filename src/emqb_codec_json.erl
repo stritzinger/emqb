@@ -26,7 +26,7 @@
 -export([decode/2]).
 
 
-%%% BEHAVIOUR amqb_codec CALLBACK FUNCTIONS %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% BEHAVIOUR emqb_codec CALLBACK FUNCTIONS %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 encode(Properties, PayloadTerm) ->
     ContentType = maps:get('Content-Type', Properties, undefined),

@@ -27,6 +27,7 @@
 %%% INCLUDES %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 -include_lib("kernel/include/logger.hrl").
+-include("emqb_internal.hrl").
 
 
 %%% EXPORTS %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -36,8 +37,8 @@
 -export([parse/1]).
 -export([validate/1]).
 -export([start_link/1]).
--export([subscribe/3]).
--export([unsubscribe/3]).
+-export([subscribe/2]).
+-export([unsubscribe/2]).
 -export([publish/4]).
 
 % Behaviour gen_server callback functions
@@ -55,13 +56,13 @@
 
 -record(subscriber_data, {
     pid :: pid(),
-    sub :: pos_integer(),
+    ref :: reference(),
     mon :: reference()
 }).
 
 -record(state, {
     path :: emqb_topic:path(),
-    subscribers = #{} :: #{{pid(), pos_integer()} => #subscriber_data{}},
+    subscribers = #{} :: #{reference() => #subscriber_data{}},
     monitors = #{} :: #{reference() => #subscriber_data{}}
 }).
 
@@ -115,13 +116,13 @@ validate(_) ->
 start_link(TopicPath) ->
     gen_server:start_link(?MODULE, [TopicPath], []).
 
--spec subscribe(pid(), pid(), term()) -> ok.
-subscribe(TopicPid, ClientPid, SubRef) ->
-    gen_server:cast(TopicPid, {subscribe, ClientPid, SubRef}).
+-spec subscribe(pid(), topic_subscription()) -> ok.
+subscribe(TopicPid, Sub) ->
+    gen_server:call(TopicPid, {subscribe, Sub}).
 
--spec unsubscribe(pid(), pid(), term()) -> ok.
-unsubscribe(TopicPid, ClientPid, SubRef) ->
-    gen_server:cast(TopicPid, {unsubscribe, ClientPid, SubRef}).
+-spec unsubscribe(pid(), reference()) -> ok.
+unsubscribe(TopicPid, SubRef) ->
+    gen_server:call(TopicPid, {unsubscribe, SubRef}).
 
 -spec publish(pid(), emqtt:properties(), emqb:payload(), [emqb_client:pubopt()])
     -> boolean().
@@ -133,64 +134,44 @@ publish(TopicPid, Properties, Payload, Opts) ->
 
 init([TopicPath]) ->
     ?LOG_INFO("Local topic ~s process started", [format(TopicPath)]),
-    emqb_registry:register_topic(self(), TopicPath),
-    State =#state{path = TopicPath},
-    {ok, State, timeout(State)}.
+    Subscriptions = emqb_registry:register_topic(self(), TopicPath),
+    State = add_subscribers(#state{path = TopicPath}, Subscriptions),
+    {ok, State, ?INACTIVITY_TIMOUT}.
 
-handle_call({publish, Properties, Payload, _Opts}, _From,
+handle_call({publish, Properties, Payload, PubOpts}, _From,
             State = #state{path = TopicPath, subscribers = Subscribers}) ->
     FilteredProps = maps:with(['Payload-Format-Indicator',
                                'Message-Expiry-Interval', 'Content-Type',
                                'Response-Topic', 'Correlation-Data',
                                'User-Property'], Properties),
-    maps:foreach(fun(_, #subscriber_data{pid = ClientPid, sub = SubRef}) ->
-        emqb_client:dispatch(ClientPid, SubRef, FilteredProps, TopicPath, Payload)
+    maps:foreach(fun(_, #subscriber_data{pid = ClientPid, ref = SubRef}) ->
+        emqb_client:dispatch(ClientPid, SubRef, FilteredProps, TopicPath,
+                             Payload, PubOpts)
     end, Subscribers),
     %TODO: Implements retain
-    {reply, maps:size(Subscribers) > 0, State, timeout(State)};
+    {reply, maps:size(Subscribers) > 0, State, ?INACTIVITY_TIMOUT};
+handle_call({subscribe, Subscription}, _From, State = #state{path = TopicPath}) ->
+    State2 = add_subscribers(State, Subscription),
+    emqb_registry:add_subscriptions(TopicPath, Subscription),
+    {reply, ok, State2, ?INACTIVITY_TIMOUT};
+handle_call({unsubscribe, SubRef}, _From, State = #state{path = TopicPath}) ->
+    State2 = del_subscribers(State, SubRef),
+    emqb_registry:del_subscriptions(TopicPath, SubRef),
+    {reply, ok, State2, ?INACTIVITY_TIMOUT};
 handle_call(Request, From, State) ->
     ?LOG_WARNING("Unexpected call ~p from ~p", [Request, From]),
-    {reply, {error, unexpected_call}, State, timeout(State)}.
+    {reply, {error, unexpected_call}, State, ?INACTIVITY_TIMOUT}.
 
-handle_cast({subscribe, ClientPid, SubRef},
-            State = #state{subscribers = Subscribers, monitors = Monitors}) ->
-    SubscriberKey = {ClientPid, SubRef},
-    case maps:find(SubscriberKey, Subscribers) of
-        {ok, _} ->
-            {noreply, State, timeout(State)};
-        error ->
-            MonRef = erlang:monitor(process, ClientPid),
-            Data = #subscriber_data{pid = ClientPid, sub = SubRef,
-                                    mon = MonRef},
-            NewSubscribers = Subscribers#{SubscriberKey => Data},
-            NewMonitors = Monitors#{MonRef => Data},
-            State2 = State#state{subscribers = NewSubscribers,
-                                 monitors = NewMonitors},
-            {noreply, State2, timeout(State2)}
-    end;
-handle_cast({unsubscribe, ClientPid, SubRef},
-            State = #state{subscribers = Subscribers, monitors = Monitors}) ->
-    SubscriberKey = {ClientPid, SubRef},
-    case maps:take(SubscriberKey, Subscribers) of
-        error ->
-            {noreply, State, timeout(State)};
-        {#subscriber_data{mon = MonRef}, NewSubscribers} ->
-            erlang:demonitor(MonRef, [flush]),
-            NewMonitors = maps:remove(MonRef, Monitors),
-            State2 = State#state{subscribers = NewSubscribers,
-                                 monitors = NewMonitors},
-            {noreply, State2, timeout(State2)}
-    end;
 handle_cast(Msg, State) ->
     ?LOG_WARNING("Unexpected cast ~p", [Msg]),
-    {noreply, State, timeout(State)}.
+    {noreply, State, ?INACTIVITY_TIMOUT}.
 
 handle_info(timeout, State = #state{path = TopicPath}) ->
     ?LOG_INFO("Inactive topic ~s shutdown", [format(TopicPath)]),
     {stop, shutdown, State};
 handle_info(Info, State) ->
     ?LOG_WARNING("Unexpected message ~p", [Info]),
-    {noreply, State, timeout(State)}.
+    {noreply, State, ?INACTIVITY_TIMOUT}.
 
 terminate(_Reason, _State) ->
     ok.
@@ -198,7 +179,29 @@ terminate(_Reason, _State) ->
 
 %%% INTERNAL FUNCTIONS %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-timeout(#state{subscribers = Subscribers}) when map_size(Subscribers) =:= 0 ->
-    ?INACTIVITY_TIMOUT;
-timeout(#state{}) ->
-    infinity.
+add_subscribers(State, []) -> State;
+add_subscribers(State, [Sub | Rest]) ->
+    add_subscribers(add_subscribers(State, Sub), Rest);
+add_subscribers(State = #state{subscribers = Subscribers, monitors = Monitors},
+                #topic_subscription{ref = SubRef, client = ClientPid}) ->
+    case maps:find(SubRef, Subscribers) of
+        {ok, _} -> State;
+        error ->
+            MonRef = erlang:monitor(process, ClientPid),
+            Data = #subscriber_data{pid = ClientPid, ref = SubRef, mon = MonRef},
+            NewSubscribers = Subscribers#{SubRef => Data},
+            NewMonitors = Monitors#{MonRef => Data},
+            State#state{subscribers = NewSubscribers, monitors = NewMonitors}
+    end.
+
+del_subscribers(State, []) -> State;
+del_subscribers(State, [SubRef | Rest]) ->
+    del_subscribers(del_subscribers(State, SubRef), Rest);
+del_subscribers(State = #state{subscribers = Subscribers, monitors = Monitors}, SubRef) ->
+    case maps:take(SubRef, Subscribers) of
+        error -> State;
+        {#subscriber_data{mon = MonRef}, NewSubscribers} ->
+            erlang:demonitor(MonRef, [flush]),
+            NewMonitors = maps:remove(MonRef, Monitors),
+            State#state{subscribers = NewSubscribers, monitors = NewMonitors}
+    end.

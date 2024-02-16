@@ -41,14 +41,15 @@
     type => supervisor,
     modules => [MOD]
 }).
--define(WORKER(MOD), #{
+-define(WORKER(MOD, ARGS), #{
     id => MOD,
-    start => {MOD, start_link, []},
+    start => {MOD, start_link, ARGS},
     restart => permanent,
     shutdown => 2000,
     type => worker,
     modules => [MOD]
 }).
+-define(WORKER(MOD), ?WORKER(MOD, [])).
 
 
 %%% PUBLIC FUNCTIONS %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
