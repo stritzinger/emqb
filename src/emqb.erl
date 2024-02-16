@@ -178,39 +178,43 @@ start_link() ->
 %% <c>emqb</c> only supports MQTT version 5.</p>
 %% <p>The extra possible options specific to <c>emqb</c> are:
 %% <ul>
-%%     <li><c>mode</c>: the startup mode of the MQTT bridge, <c>external</c>,
-%%       <c>internal</c> or <c>hybride</c>. In internal mode, the bridge will
-%%       not try to connect to a MQTT broker and will only work internally.
-%%       In external mode the bridge will connect to the MQTT broker and
-%%       only use external MQTT message. In hybride mode, the bridge will
-%%       connect to the MQTT broker and post the message both internally
+%%     <li><b><c>mode</c></b>: the startup mode of the MQTT bridge,
+%%       <c>external</c>,, <c>internal</c> or <c>hybride</c>.
+%%       In internal mode, the bridge will not try to connect to
+%%       a MQTT broker and will only work internally.
+%%       In external mode the bridge will connect to
+%%       the MQTT broker and only use external MQTT message.
+%%       In hybride mode, the bridge will connect to the MQTT
+%%       broker and post the message both internally
 %%       and to the broker, and if the publish option <c>bypass</c> is
 %%       specified and there is a local consumer for the message, it will
 %%       not be published to the MQTT broker. Default: <c>hybride</c>.
 %%     </li>
-%%     <li><c>conn_type</c>: the connection type to use to connect to the MQTT
-%%      broker, could be either <c>tcp</c> or <c>ws</c> and the default is
-%%      <c>tcp</c>.
+%%     <li><b><c>conn_type</c></b>: the connection type to use to
+%%      connect to the MQTT broker, could be either <c>tcp</c>
+%%      or <c>ws</c> and the default is <c>tcp</c>.
 %%    </li>
-%%    <li><c>reconn_max_retries</c>: the maximum number of time the client will
-%%      retry to connect to the MQTT broker. Default: <c>8</c>.
+%%    <li><b><c>reconn_max_retries</c></b>: the maximum number
+%%      of time the client will retry to connect to the MQTT
+%%      broker. Default: <c>8</c>.
 %%    </li>
-%%    <li><c>reconn_base_delay</c>: the base delay in milliseconds for
-%%      reconnecting to the MQTT broker after disconnection.
-%%      Default: <c>1000</c>.
+%%    <li><b><c>reconn_base_delay</c></b>: the base delay in
+%%      milliseconds for reconnecting to the MQTT broker
+%%      after disconnection. Default: <c>1000</c>.
 %%    </li>
-%%    <li><c>reconn_max_delay</c>: the maximum delay in milliseconds for
-%%      reconnection. Default: <c>32000</c>.
+%%    <li><b><c>reconn_max_delay</c></b>: the maximum delay in
+%%      milliseconds for reconnection. Default: <c>32000</c>.
 %%    </li>
-%%    <li><c>reconn_multiplier</c>: the multiplier for reconnection exponential
-%%      backoff. Default: <c>2</c>.
+%%    <li><b><c>reconn_multiplier</c></b>: the multiplier for
+%%      reconnection exponential backoff. Default: <c>2</c>.
 %%    </li>
-%%    <li><c>reconn_jitter</c>: the jitter in milliseconds for reconnection
-%%      exponential backoff. The random value added to the connection delay
-%%      will be between <c>(-(J div 2) - (J rem 2))</c> and <c>(J div 2)</c>
+%%    <li><b><c>reconn_jitter</c></b>: the jitter in milliseconds
+%%      for reconnection exponential backoff. The random value
+%%      added to the connection delay will be between
+%%      <c>(-(J div 2) - (J rem 2))</c> and <c>(J div 2)</c>
 %%      where <c>J</c> is the value of this options. Default: <c>1000</c>.
 %%    </li>
-%%    <li><c>codec</c>: the codec callback module implementing behaviour
+%%    <li><b><c>codec</c></b>: the codec callback module implementing behaviour
 %%      <c>emqb_codec</c> to use for encoding and decoding MQTT payloads.
 %%      Default: <c>emqb_codec_json</c>.
 %%    </li>
