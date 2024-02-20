@@ -566,6 +566,10 @@ init([auto_ack = Opt | Opts], Data = #data{emqtt_opts = EmqttOpts}) ->
 init([{auto_ack, AutoAck} = Opt | Opts], Data = #data{emqtt_opts = EmqttOpts})
   when is_boolean(AutoAck) ->
     init(Opts, Data#data{auto_ack = AutoAck, emqtt_opts = [Opt | EmqttOpts]});
+init([{Key, undefined} | Opts], Data = #data{emqtt_opts = EmqttOpts})
+  when Key =:= username; Key =:= password ->
+    % If undefined, we just ignore the option
+    init(Opts, Data#data{emqtt_opts = EmqttOpts});
 init([{Key, _} = Opt | Opts], Data = #data{emqtt_opts = EmqttOpts})
   when Key =:= host; Key =:= port; Key =:= hosts; Key =:= tcp_opts;
        Key =:= ssl; Key =:= ssl_opts; Key =:= ws_path; Key =:= clean_start;
