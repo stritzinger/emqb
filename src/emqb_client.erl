@@ -567,7 +567,7 @@ init([{auto_ack, AutoAck} = Opt | Opts], Data = #data{emqtt_opts = EmqttOpts})
   when is_boolean(AutoAck) ->
     init(Opts, Data#data{auto_ack = AutoAck, emqtt_opts = [Opt | EmqttOpts]});
 init([{Key, undefined} | Opts], Data = #data{emqtt_opts = EmqttOpts})
-  when Key =:= username; Key =:= password ->
+  when Key =:= host; Key =:= port; Key =:= username; Key =:= password ->
     % If undefined, we just ignore the option
     init(Opts, Data#data{emqtt_opts = EmqttOpts});
 init([{Key, _} = Opt | Opts], Data = #data{emqtt_opts = EmqttOpts})
