@@ -287,11 +287,6 @@ subscribe(Client, Properties, Topic, Opts)
     validate_qos(Opts),
     emqb_client:subscribe(Client, Properties, [{Topic, Opts}]).
 
-%% @doc Publishes to a to MQTT topics.
--spec publish(emqb_client:client(), emqtt:topic(), payload()) -> ok | {error, term()}.
-publish(Client, Topic, Payload) when is_binary(Topic) ->
-    emqb_client:publish(Client, Topic, #{}, Payload, [{qos, ?QOS_0}]).
-
 %% @doc Unsubscribes from MQTT topics.
 -spec unsubscribe(emqb_client:client(), emqtt:topic() | [emqtt:topic()])
     -> subscribe_ret().
@@ -312,7 +307,12 @@ unsubscribe(Client, Properties, Topics)
   when is_map(Properties), is_list(Topics) ->
     emqb_client:unsubscribe(Client, Properties, Topics).
 
-%% @doc Publishes to a to an MQTT topic.
+%% @doc Publishes to an MQTT topics.
+-spec publish(emqb_client:client(), emqtt:topic(), payload()) -> ok | {error, term()}.
+publish(Client, Topic, Payload) when is_binary(Topic) ->
+    emqb_client:publish(Client, Topic, #{}, Payload, [{qos, ?QOS_0}]).
+
+%% @doc Publishes to an MQTT topic.
 -spec publish(emqb_client:client(), emqtt:topic(), payload(), pubopts())
     -> ok | {ok, emqtt:packet_id() | reference()} | {error, term()}.
 publish(Client, Topic, Payload, QoS)
