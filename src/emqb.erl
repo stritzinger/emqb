@@ -62,6 +62,7 @@
 
 %%% TYPES %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
+-type client() :: emqb_client:client().
 -type payload() :: term().
 -type mode() :: internal | external | hybride.
 -type conn_type() :: tcp | ws.
@@ -158,7 +159,7 @@
 -type pubopts() :: qos() | qos_name() | [pubopt()].
 
 -export_type([
-    mode/0, conn_type/0, qos/0, option/0, subscribe_ret/0, payload/0,
+    client/0, mode/0, conn_type/0, qos/0, option/0, subscribe_ret/0, payload/0,
     message/0, puback/0
 ]).
 
@@ -167,7 +168,7 @@
 
 %% @doc Starts a emqb client.
 %% Same as `emqb:start_link(#{})'.
--spec start_link() -> gen_statem:start_ret().
+-spec start_link() -> {ok, client()} | ignore | {error, term()}.
 start_link() ->
     emqb_client:start_link([]).
 
@@ -219,7 +220,7 @@ start_link() ->
 %%      Default: <c>emqb_codec_json</c>.
 %%    </li>
 %%  </ul></p>
--spec start_link(start_opts()) -> gen_statem:start_ret().
+-spec start_link(start_opts()) -> {ok, client()} | ignore | {error, term()}.
 start_link(StartOpts) when is_map(StartOpts) ->
     emqb_client:start_link(maps:to_list(StartOpts));
 start_link(StartOpts) when is_list(StartOpts) ->
