@@ -146,13 +146,13 @@ init_per_testcase(TestName, Config) ->
     end, #{}, ProcNames),
     [{proc_map, ProcMap} | AllConfig].
 
-end_per_testcase(_TestName, Config) ->
+end_per_testcase(TestName, Config) ->
     ProcMap = proplists:get_value(proc_map, Config, #{}),
     maps:foreach(fun(_ProcName, ProcPid) ->
         stop_process(ProcPid)
     end, ProcMap),
     application:stop(emqb),
-    dbg:stop_clear(),
+    ct_utils:stop_tracing(TestName),
     ok.
 
 

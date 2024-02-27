@@ -108,7 +108,8 @@
 % Change to use emqtt:pubopt() when supporting QoS 2
 % Same as emqb:pubopt() but the qos is required to be an integer
 -type pubopt() :: {retain, boolean()}
-                | {qos, emqb:qos()}.
+                | {qos, emqb:qos()}
+                | {bypass, boolean()}.
 
 -export_type([client/0, subopt/0, pubopt/0]).
 

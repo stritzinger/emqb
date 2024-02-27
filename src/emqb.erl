@@ -160,7 +160,7 @@
 
 -export_type([
     client/0, mode/0, conn_type/0, qos/0, option/0, subscribe_ret/0, payload/0,
-    message/0, puback/0
+    message/0, puback/0, subopt/0, subopts/0, pubopt/0, pubopts/0
 ]).
 
 
@@ -284,8 +284,7 @@ subscribe(Client, Properties, Topic, QoS)
     emqb_client:subscribe(Client, Properties, [{Topic, [{qos, QoS}]}]);
 subscribe(Client, Properties, Topic, Opts)
   when is_map(Properties), is_binary(Topic), is_list(Opts) ->
-    validate_qos(Opts),
-    emqb_client:subscribe(Client, Properties, [{Topic, Opts}]).
+    emqb_client:subscribe(Client, Properties, [{Topic, validate_qos(Opts)}]).
 
 %% @doc Unsubscribes from MQTT topics.
 -spec unsubscribe(emqb_client:client(), emqtt:topic() | [emqtt:topic()])
@@ -323,8 +322,7 @@ publish(Client, Topic, Payload, QoS)
     emqb_client:publish(Client, Topic, #{}, Payload, [{qos, QoS}]);
 publish(Client, Topic, Payload, PubOpts)
   when is_binary(Topic), is_list(PubOpts) ->
-    validate_qos(PubOpts),
-    emqb_client:publish(Client, Topic, #{}, Payload, PubOpts).
+    emqb_client:publish(Client, Topic, #{}, Payload, validate_qos(PubOpts)).
 
 %% @doc Publishes to a to an MQTT topic.
 -spec publish(emqb_client:client(), emqtt:topic(), emqtt:properties(), payload(), pubopts())
@@ -338,8 +336,8 @@ publish(Client, Topic, Properties, Payload, QoS)
     emqb_client:publish(Client, Topic, Properties, Payload, [{qos, QoS}]);
 publish(Client, Topic, Properties, Payload, PubOpts)
   when is_binary(Topic), is_map(Properties), is_list(PubOpts) ->
-    validate_qos(PubOpts),
-    emqb_client:publish(Client, Topic, Properties, Payload, PubOpts).
+    PubOpts2 = validate_qos(PubOpts),
+    emqb_client:publish(Client, Topic, Properties, Payload, PubOpts2).
 
 %% @doc Acknowledge a message received with QoS 1 and no `auto_ack'.
 -spec puback(emqb_client:client(), emqtt:packet_id()) -> ok.
@@ -362,18 +360,22 @@ puback(Client, PacketId, ReasonCode, Properties)
 %%% INTERNAL FUNCTIONS %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 % As emqb doesn't support QoS 2 yet, this help validating it is not required.
-validate_qos(0) -> ok;
-validate_qos(1) -> ok;
-validate_qos(qos0) -> ok;
-validate_qos(qos1) -> ok;
-validate_qos(at_most_once) -> ok;
-validate_qos(at_least_once) -> ok;
-validate_qos([]) -> ok;
-validate_qos([{qos, QoS} | Rest]) ->
-    validate_qos(QoS),
-    validate_qos(Rest);
-validate_qos(QoS) ->
-    throw({mqtt_qos_not_supported, QoS}).
+validate_qos(Opts) ->
+    validate_qos(Opts, []).
+
+validate_qos(?QOS_0, Acc) -> [{qos, ?QOS_0} | Acc];
+validate_qos(?QOS_1, Acc) -> [{qos, ?QOS_1} | Acc];
+validate_qos(qos0, Acc) -> [{qos, ?QOS_0} | Acc];
+validate_qos(qos1, Acc) -> [{qos, ?QOS_1} | Acc];
+validate_qos(at_most_once, Acc) -> [{qos, ?QOS_0} | Acc];
+validate_qos(at_least_once, Acc) -> [{qos, ?QOS_1} | Acc];
+validate_qos([], Acc) -> Acc;
+validate_qos([{qos, QoS} | Rest], Acc) ->
+    validate_qos(Rest, validate_qos(QoS, Acc));
+validate_qos([Opt | Rest], Acc) ->
+    validate_qos(Rest, [Opt | Acc]);
+validate_qos(Other, _Acc) ->
+    throw({mqtt_qos_not_supported, Other}).
 
 validate_topic_spec(Topic)
   when is_binary(Topic) ->
@@ -384,10 +386,9 @@ validate_topic_spec({Topic, QoS})
 validate_topic_spec({Topic, QoS})
  when is_binary(Topic), ?IS_QOS_NAME(QoS) ->
     {Topic, [{qos, atom2qos(QoS)}]};
-validate_topic_spec({Topic, SubOpts} = Result)
+validate_topic_spec({Topic, SubOpts})
  when is_binary(Topic) ->
-    validate_qos(SubOpts),
-    Result;
+    {Topic, validate_qos(SubOpts)};
 validate_topic_spec(Other) ->
     throw({invlid_topic_spec, Other}).
 
