@@ -27,8 +27,11 @@
     pattern :: emqb_topic:path(),
     client :: pid(),
     owner :: pid(),
+    sid :: undefined | non_neg_integer(),
     qos :: emqb:qos(),
-    sid :: undefined | non_neg_integer()
+    rh ::  undefined | 0 | 1 | 2,
+    rap :: undefined | boolean(),
+    nl :: undefined | boolean()
 }).
 
 -type topic_subscription() :: #topic_subscription{}.

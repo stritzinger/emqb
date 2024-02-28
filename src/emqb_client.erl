@@ -95,7 +95,7 @@
     conn_props = #{} :: emqtt:properties(),
     subscriptions = #{} :: #{reference() => topic_subscription()},
     patterns :: emqb_topic_tree:topic_tree(reference()),
-    topics = #{} :: #{reference => #{emqb_topic:path() => pid()}}
+    topics = #{} :: #{reference() => #{emqb_topic:path() => pid()}}
 }).
 
 % Change to use emqtt:subopt() when supporting QoS 2
@@ -316,23 +316,26 @@ connecting(EventType, EventContent, Data) ->
 
 %-- External Mode State Event Handler ------------------------------------------
 
-external_mode(enter, _OldState, _Data) ->
+external_mode(enter, _OldState, Data) ->
+    resubscribe_external(Data),
     keep_state_and_data;
-external_mode({call, From}, {subscribe, Properties, Topics}, Data) ->
-    case subscribe_external(Data, Properties, Topics) of
-        {error, Reason, Data2} ->
+external_mode({call, From}, {subscribe, Properties, TopicSpec}, Data) ->
+    {PrepTopicSpec, Data2} = subscribe_prepare(Data, Properties, TopicSpec),
+    case subscribe_external(Data2, Properties, PrepTopicSpec) of
+        {error, Reason, Data3} ->
             ?LOG_WARNING("External MQTT subscribe failed: ~p", [Reason]),
-            {keep_state, Data2, [{reply, From, {error, Reason}}]};
-        {ok, ExtProps, ExtCodes, Data2} ->
-            {keep_state, Data2, [{reply, From, {ok, ExtProps, ExtCodes}}]}
+            {keep_state, Data3, [{reply, From, {error, Reason}}]};
+        {ok, ExtProps, ExtCodes, Data3} ->
+            {keep_state, Data3, [{reply, From, {ok, ExtProps, ExtCodes}}]}
     end;
 external_mode({call, From}, {unsubscribe, Properties, Topics}, Data) ->
-    case unsubscribe_external(Data, Properties, Topics) of
-        {error, Reason1, Data2} ->
+    {PrepTopics, Data2} = unsubscribe_prepare(Data, Topics),
+    case unsubscribe_external(Data2, Properties, PrepTopics) of
+        {error, Reason1, Data3} ->
             ?LOG_WARNING("External MQTT unsubscribe failed: ~p", [Reason1]),
-            {keep_state, Data2, [{reply, From, {error, Reason1}}]};
-        {ok, ResProps, ResCodes, Data2} ->
-            {keep_state, Data2, [{reply, From, {ok, ResProps, ResCodes}}]}
+            {keep_state, Data3, [{reply, From, {error, Reason1}}]};
+        {ok, ResProps, ResCodes, Data3} ->
+            {keep_state, Data3, [{reply, From, {ok, ResProps, ResCodes}}]}
     end;
 external_mode({call, From}, {publish_external, Topic, Properties, Payload, Opts}, Data) ->
     case publish_external(Data, Topic, Properties, Payload, Opts) of
@@ -369,25 +372,28 @@ external_mode(EventType, EventContent, Data) ->
 
 %-- Hybrid Mode State Event Handler --------------------------------------------
 
-hybrid_mode(enter, _OldState, _Data) ->
+hybrid_mode(enter, _OldState, Data) ->
+    resubscribe_external(Data),
     keep_state_and_data;
-hybrid_mode({call, From}, {subscribe, Properties, Topics}, Data) ->
-    case subscribe_external(Data, Properties, Topics) of
-        {error, Reason1, Data2} ->
+hybrid_mode({call, From}, {subscribe, Properties, TopicSpec}, Data) ->
+    {PrepTopicSpec, Data2} = subscribe_prepare(Data, Properties, TopicSpec),
+    case subscribe_external(Data2, Properties, PrepTopicSpec) of
+        {error, Reason1, Data3} ->
             ?LOG_WARNING("External MQTT subscribe failed: ~p", [Reason1]),
-            {keep_state, Data2, [{reply, From, {error, Reason1}}]};
-        {ok, ExtProps, ExtCodes, Data2} ->
-            {_, _, Data3} = subscribe_internal(Data2, Properties, Topics),
-            {keep_state, Data3, [{reply, From, {ok, ExtProps, ExtCodes}}]}
+            {keep_state, Data3, [{reply, From, {error, Reason1}}]};
+        {ok, ExtProps, ExtCodes, Data3} ->
+            {_, _, Data4} = subscribe_internal(Data3, Properties, PrepTopicSpec),
+            {keep_state, Data4, [{reply, From, {ok, ExtProps, ExtCodes}}]}
     end;
 hybrid_mode({call, From}, {unsubscribe, Properties, Topics}, Data) ->
-    case unsubscribe_external(Data, Properties, Topics) of
-        {error, Reason1, Data2} ->
+    {PrepTopics, Data2} = unsubscribe_prepare(Data, Topics),
+    case unsubscribe_external(Data2, Properties, PrepTopics) of
+        {error, Reason1, Data3} ->
             ?LOG_WARNING("External MQTT unsubscribe failed: ~p", [Reason1]),
-            {keep_state, Data2, [{reply, From, {error, Reason1}}]};
-        {ok, ExtProps, ExtCodes, Data2} ->
-            {_, _, Data3} = unsubscribe_internal(Data2, Properties, Topics),
-            {keep_state, Data3, [{reply, From, {ok, ExtProps, ExtCodes}}]}
+            {keep_state, Data3, [{reply, From, {error, Reason1}}]};
+        {ok, ExtProps, ExtCodes, Data3} ->
+            {_, _, Data4} = unsubscribe_internal(Data3, Properties, PrepTopics),
+            {keep_state, Data4, [{reply, From, {ok, ExtProps, ExtCodes}}]}
     end;
 hybrid_mode({call, From}, {publish_external, Topic, Properties, Payload, Opts}, Data) ->
     case publish_external(Data, Topic, Properties, Payload, Opts) of
@@ -436,12 +442,14 @@ hybrid_mode(EventType, EventContent, Data) ->
 
 internal_mode(enter, _OldState, _Data) ->
     keep_state_and_data;
-internal_mode({call, From}, {subscribe, Properties, Topics}, Data) ->
-    {ResProps, ResCodes, Data2} = subscribe_internal(Data, Properties, Topics),
-    {keep_state, Data2, [{reply, From, {ok, ResProps, ResCodes}}]};
+internal_mode({call, From}, {subscribe, Properties, TopicSpec}, Data) ->
+    {PrepTopicSpec, Data2} = subscribe_prepare(Data, Properties, TopicSpec),
+    {ResProps, ResCodes, Data3} = subscribe_internal(Data2, Properties, PrepTopicSpec),
+    {keep_state, Data3, [{reply, From, {ok, ResProps, ResCodes}}]};
 internal_mode({call, From}, {unsubscribe, Properties, Topics}, Data) ->
-    {ResProps, ResCodes, Data2} = unsubscribe_internal(Data, Properties, Topics),
-    {keep_state, Data2, [{reply, From, {ok, ResProps, ResCodes}}]};
+    {PrepTopics, Data2} = unsubscribe_prepare(Data, Topics),
+    {ResProps, ResCodes, Data3} = unsubscribe_internal(Data2, Properties, PrepTopics),
+    {keep_state, Data3, [{reply, From, {ok, ResProps, ResCodes}}]};
 internal_mode({call, From}, {topic_added, TopicPath, TopicPid}, Data) ->
     {Data2, Subs} = topic_added_internal(Data, TopicPath, TopicPid),
     {keep_state, Data2, [{reply, From, Subs}]};
@@ -491,6 +499,25 @@ with_owner(Opts) ->
         Owner when is_pid(Owner) -> Opts;
         undefined -> [{owner, self()} | Opts]
     end.
+
+parse_subopts(Sub, []) -> Sub;
+parse_subopts(Sub, [{qos, QoS} | Rest]) ->
+    parse_subopts(Sub#topic_subscription{qos = QoS}, Rest);
+parse_subopts(Sub, [{rh, RH} | Rest]) ->
+    parse_subopts(Sub#topic_subscription{rh = RH}, Rest);
+parse_subopts(Sub, [{rap, RAP} | Rest]) ->
+    parse_subopts(Sub#topic_subscription{rap = RAP}, Rest);
+parse_subopts(Sub, [{nl, NL} | Rest]) ->
+    parse_subopts(Sub#topic_subscription{nl = NL}, Rest).
+
+format_subparams(Sub) ->
+    #topic_subscription{sid = Sid, qos = QoS, rh = RH, rap = RAP, nl = NL} = Sub,
+    KV = [{qos, QoS}, {rh, RH}, {rap, RAP}, {nl, NL}],
+    SubOpts = [{K, V} || {K, V} <- KV, V =/= undefined],
+    SubProps = if Sid =:= undefined -> #{};
+        true -> #{'Subscription-Identifier' => Sid}
+    end,
+    {SubProps, SubOpts}.
 
 %% @doc Calculate the next reconnection delay.
 %% NextDelay = min(MaxDelay, LastDelay * Multiplier + Jitter)
@@ -669,6 +696,46 @@ get_custom_prop(Key,  #{'User-Property' := UserProps}, Default)
 get_custom_prop(_Key,  #{}, Default) ->
     Default.
 
+subscribe_prepare(Data, SubProps, TopicSpec) ->
+    subscribe_prepare(Data, SubProps, TopicSpec, []).
+
+subscribe_prepare(Data, _SubProps, [], Acc) ->
+    {lists:reverse(Acc), Data};
+subscribe_prepare(Data, SubProps,
+                  [{{_, TopicPattern}, SubOpts} = Spec | Rest], Acc) ->
+    #data{owner = Owner, subscriptions = Subs, patterns = Tree} = Data,
+    SubRef = make_ref(),
+    SubId = maps:get('Subscription-Identifier', SubProps, undefined),
+    SubData = parse_subopts(#topic_subscription{
+        ref = SubRef,
+        client = self(),
+        owner = Owner,
+        pattern = TopicPattern,
+        sid = SubId,
+        qos = ?QOS_0
+    }, SubOpts),
+    Subs2 = Subs#{SubRef => SubData},
+    Tree2 = emqb_topic_tree:update(TopicPattern, SubRef, Tree),
+    Data2 = Data#data{subscriptions = Subs2, patterns = Tree2},
+    subscribe_prepare(Data2, SubProps, Rest, [{Spec, SubData} | Acc]).
+
+unsubscribe_prepare(Data, Topics) ->
+    unsubscribe_prepare(Data, Topics, []).
+
+unsubscribe_prepare(Data, [], Acc) ->
+    {lists:reverse(Acc), Data};
+unsubscribe_prepare(Data = #data{subscriptions = Subs, patterns = Tree},
+                    [{_, TopicPattern} = Topic | Rest], Acc) ->
+    case emqb_topic_tree:find(TopicPattern, Tree) of
+        error ->
+            unsubscribe_prepare(Data, Rest, [{Topic, undefined} | Acc]);
+        {ok, SubRef} ->
+            {SubData, Subs2} = maps:take(SubRef, Subs),
+            Tree2 = emqb_topic_tree:remove(TopicPattern, Tree),
+            Data2 = Data#data{subscriptions = Subs2, patterns = Tree2},
+            unsubscribe_prepare(Data2, Rest, [{Topic, SubData} | Acc])
+    end.
+
 publish_external(Data, Topic, Properties, Payload, Opts) ->
     #data{mode = Mode, client = Client, codec = Codec} = Data,
     case Codec:encode(Properties, Payload) of
@@ -724,23 +791,44 @@ dispatch_external_send(Data = #data{owner = Owner},
     Owner ! {publish, Msg#{client_pid => self()}},
     Data.
 
-subscribe_external(Data, Properties, TopicSpec) ->
+subscribe_external(Data, Properties, PreparedTopicSpec) ->
     #data{client = Client} = Data,
     % Filter out the parsed topics
-    FilteredSpec = [{T, O} || {{T, _}, O} <- TopicSpec],
+    FilteredSpec = [{T, O} || {{{T, _}, O}, _} <- PreparedTopicSpec],
     case emqtt:subscribe(Client, Properties, FilteredSpec) of
         {ok, Props, Codes} -> {ok, Props, Codes, Data};
         {error, Reason} -> {error, Reason, Data}
     end.
 
-unsubscribe_external(Data, Properties, Topics) ->
+unsubscribe_external(Data, Properties, PreparedTopics) ->
     #data{client = Client} = Data,
     % Filter out the parsed topics
-    FilteredTopics = [T || {T, _} <- Topics],
+    FilteredTopics = [T || {{T, _}, _} <- PreparedTopics],
     case emqtt:unsubscribe(Client, Properties, FilteredTopics) of
         {ok, Props, Codes} -> {ok, Props, Codes, Data};
         {error, Reason} -> {error, Reason, Data}
     end.
+
+resubscribe_external(Data) ->
+    #data{client = Client, subscriptions = Subs, patterns = Tree} = Data,
+    emqb_topic_tree:fold(fun(TopicPath, SubRef, undefined) ->
+        SubInfo = maps:get(SubRef, Subs),
+        {SubProps, SubOpts} = format_subparams(SubInfo),
+        Topic = emqb_topic:format(TopicPath),
+        case emqtt:subscribe(Client, SubProps, Topic, SubOpts) of
+            {ok, _ResProps, [?RC_GRANTED_QOS_0]} -> undefined;
+            {ok, _ResProps, [?RC_GRANTED_QOS_1]} -> undefined;
+            {ok, _ResProps, [Code]} ->
+                ?LOG_WARNING("Failed to restore subscription to topic ~s: ~s",
+                             [Topic, emqb_utils:mqtt_code2reason(Code)]),
+                undefined;
+            {error, Reason} ->
+                ?LOG_WARNING("Failed to restore subscription to topic ~s: ~p",
+                             [Topic, Reason]),
+                undefined
+        end
+    end, undefined, Tree),
+    ok.
 
 puback_external(Data, PacketId, ReasonCode, Properties) ->
     #data{client = Client} = Data,
@@ -787,29 +875,17 @@ publish_internal(Owner, TopicPath, Props, Payload, PubOpts) ->
             end
     end.
 
-subscribe_internal(Data, Properties, Topics) ->
-    subscribe_internal(Data, Properties, Topics, #{}, []).
+subscribe_internal(Data, Properties, PreparedTopics) ->
+    subscribe_internal(Data, Properties, PreparedTopics, #{}, []).
 
 subscribe_internal(Data, _SubProps, [], ResProps, Acc) ->
     {ResProps, lists:reverse(Acc), Data};
-subscribe_internal(Data, SubProps, [{{_, TopicPattern}, SubOpts} | Rest], ResProps, Acc) ->
-    #data{owner = Owner, subscriptions = Subs, patterns = Tree, topics = Topics} = Data,
-    SubRef = make_ref(),
-    SubId = maps:get('Subscription-Identifier', SubProps, undefined),
-    QoS = opt_qos(SubOpts),
+subscribe_internal(Data = #data{topics = Topics}, SubProps,
+                   [{{{_, TopicPattern}, _}, SubData} | Rest], ResProps, Acc) ->
+    #topic_subscription{ref = SubRef, qos = QoS} = SubData,
     TopicPids = emqb_registry:match_topics(TopicPattern),
-    SubData = #topic_subscription{
-        ref = SubRef,
-        client = self(),
-        owner = Owner,
-        pattern = TopicPattern,
-        sid = SubId,
-        qos = QoS
-    },
-    Subs2 = Subs#{SubRef => SubData},
-    Tree2 = emqb_topic_tree:update(TopicPattern, SubRef, Tree),
     Topics2 = Topics#{SubRef => maps:from_list(TopicPids)},
-    Data2 = Data#data{subscriptions = Subs2, patterns = Tree2, topics = Topics2},
+    Data2 = Data#data{topics = Topics2},
     lists:foreach(fun({_, TopicPid}) ->
         emqb_topic:subscribe(TopicPid, SubData)
     end, TopicPids),
@@ -819,29 +895,25 @@ subscribe_internal(Data, SubProps, [{{_, TopicPattern}, SubOpts} | Rest], ResPro
     end,
     subscribe_internal(Data2, SubProps, Rest, ResProps, [ResCode | Acc]).
 
-unsubscribe_internal(Data, Properties, Topics) ->
-    unsubscribe_internal(Data, Properties, Topics, #{}, []).
+unsubscribe_internal(Data, Properties, PreparedTopics) ->
+    unsubscribe_internal(Data, Properties, PreparedTopics, #{}, []).
 
 unsubscribe_internal(Data, _SubProps, [], ResProps, Acc) ->
     {ResProps, lists:reverse(Acc), Data};
-unsubscribe_internal(Data, SubProps, [{_, TopicPattern} | Rest], ResProps, Acc) ->
-    #data{subscriptions = Subs, patterns = Tree, topics = Topics} = Data,
-    case emqb_topic_tree:find(TopicPattern, Tree) of
-        error ->
-            ResCode = ?RC_NO_SUBSCRIPTION_EXISTED,
-            unsubscribe_internal(Data, SubProps, Rest, ResProps, [ResCode | Acc]);
-        {ok, SubRef} ->
-            #{SubRef := TopicMap} = Topics,
-            Subs2 = maps:remove(SubRef, Subs),
-            Topics2 = maps:remove(SubRef, Topics),
-            Tree2 = emqb_topic_tree:remove(TopicPattern, Tree),
-            Data2 = Data#data{subscriptions = Subs2, patterns = Tree2, topics = Topics2},
-            maps:foreach(fun(_, TopicPid) ->
-                emqb_topic:unsubscribe(TopicPid, SubRef)
-            end, TopicMap),
-            ResCode = ?RC_SUCCESS,
-            unsubscribe_internal(Data2, SubProps, Rest, ResProps, [ResCode | Acc])
-    end.
+unsubscribe_internal(Data, SubProps, [{_, undefined} | Rest], ResProps, Acc) ->
+    ResCode = ?RC_NO_SUBSCRIPTION_EXISTED,
+    unsubscribe_internal(Data, SubProps, Rest, ResProps, [ResCode | Acc]);
+unsubscribe_internal(Data = #data{topics = Topics}, SubProps,
+                     [{_, SubData} | Rest], ResProps, Acc) ->
+    #topic_subscription{ref = SubRef} = SubData,
+    #{SubRef := TopicMap} = Topics,
+    Topics2 = maps:remove(SubRef, Topics),
+    Data2 = Data#data{topics = Topics2},
+    maps:foreach(fun(_, TopicPid) ->
+        emqb_topic:unsubscribe(TopicPid, SubRef)
+    end, TopicMap),
+    ResCode = ?RC_SUCCESS,
+    unsubscribe_internal(Data2, SubProps, Rest, ResProps, [ResCode | Acc]).
 
 dispatch_internal(Data = #data{subscriptions = Subscriptions},
                   SubRef, TopicPath, Props, Payload, PubOpts) ->
