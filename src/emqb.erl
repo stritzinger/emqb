@@ -119,7 +119,6 @@
     ws_path => string(),
     connect_timeout => pos_integer(),
     bridge_mode => boolean(),
-    clean_start => boolean(),
     username => undefined | iodata(),
     password => undefined | iodata(),
     keepalive => non_neg_integer(),
@@ -180,7 +179,7 @@ start_link() ->
 %% <p>The extra possible options specific to <c>emqb</c> are:
 %% <ul>
 %%     <li><b><c>mode</c></b>: the startup mode of the MQTT bridge,
-%%       <c>external</c>,, <c>internal</c> or <c>hybrid</c>.
+%%       <c>external</c>, <c>internal</c> or <c>hybrid</c>.
 %%       In internal mode, the bridge will not try to connect to
 %%       a MQTT broker and will only work internally.
 %%       In external mode the bridge will connect to

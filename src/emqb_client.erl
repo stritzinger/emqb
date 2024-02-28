@@ -600,7 +600,7 @@ init([{Key, undefined} | Opts], Data = #data{emqtt_opts = EmqttOpts})
     init(Opts, Data#data{emqtt_opts = EmqttOpts});
 init([{Key, _} = Opt | Opts], Data = #data{emqtt_opts = EmqttOpts})
   when Key =:= host; Key =:= port; Key =:= hosts; Key =:= tcp_opts;
-       Key =:= ssl; Key =:= ssl_opts; Key =:= ws_path; Key =:= clean_start;
+       Key =:= ssl; Key =:= ssl_opts; Key =:= ws_path;
        Key =:= username; Key =:= password; Key =:= keepalive;
        Key =:= will_topic; Key =:= will_props; Key =:= will_payload;
        Key =:= will_retain; Key =:= will_qos; Key =:= connect_timeout;
@@ -658,12 +658,18 @@ emqtt_connect(Data = #data{client = Client}) ->
 
 update_conn_opts(Data, PropMap) when is_map(PropMap) ->
     update_conn_opts(Data, maps:to_list(PropMap));
-update_conn_opts(Data, []) -> Data;
+update_conn_opts(Data = #data{clientid = undefined}, []) ->
+    Data;
+update_conn_opts(Data = #data{emqtt_opts = Opts}, []) ->
+    % If there is a defined client identifier, we set clean_start option to
+    % false for the next time we will connect to the broker.
+    Opts2 = [{clean_start, false} | proplists:delete(clean_start, Opts)],
+    Data#data{emqtt_opts = Opts2};
 update_conn_opts(Data, [{'Assigned-Client-Identifier', ClientId} | Rest]) ->
     #data{emqtt_opts = Opts} = Data,
-    NewOpts = [{clientid, ClientId} | proplists:delete(clientid, Opts)],
-    NewData = Data#data{clientid = ClientId, emqtt_opts = NewOpts},
-    update_conn_opts(NewData, Rest);
+    Opts2 = [{clientid, ClientId} | proplists:delete(clientid, Opts)],
+    Data2 = Data#data{clientid = ClientId, emqtt_opts = Opts2},
+    update_conn_opts(Data2, Rest);
 update_conn_opts(_Data, [{'Retain-Available', false} | _Rest]) ->
     erlang:throw(mqtt_broker_do_not_support_retain);
 update_conn_opts(_Data, [{'Wildcard-Subscription-Available', false} | _Rest]) ->
