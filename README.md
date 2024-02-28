@@ -17,7 +17,7 @@ Could be used in multiple mode:
    external MQTT broker.
  - `external` : All the messages are sent exclusively to an external MQTT broker.
    There is no much difference between this mode and using `emqtt` directly.
- - `hybride` : In this mode, the messages are sent both internally and to the
+ - `hybrid` : In this mode, the messages are sent both internally and to the
    external broker. The messages are taged with an instance identifier so they
    are filtered out when comming back to the VM. This allows all the services
    in the VM to comunicate directly while any external services using the same

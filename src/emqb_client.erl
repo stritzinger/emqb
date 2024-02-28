@@ -58,7 +58,7 @@
 -export([disconnected/3]).
 -export([connecting/3]).
 -export([external_mode/3]).
--export([hybride_mode/3]).
+-export([hybrid_mode/3]).
 -export([internal_mode/3]).
 -export([handle_event/4]).
 -export([terminate/3]).
@@ -71,7 +71,7 @@
 -record(data, {
     name :: atom(),
     owner :: undefined | pid(),
-    mode = hybride :: emqb:mode(),
+    mode = hybrid :: emqb:mode(),
     conn_type = tcp :: emqb:conn_type(),
     codec = emqb_codec_json :: module(),
     clientid :: undefined | binary(),
@@ -157,7 +157,7 @@ publish({_ClientPid, Owner, internal}, Topic, Properties, Payload, PubOpts)
         {ok, _, undefined} -> ok;
         {ok, _, PacketRef} -> {ok, PacketRef}
     end;
-publish({ClientPid, Owner, hybride}, Topic, Properties, Payload, PubOpts)
+publish({ClientPid, Owner, hybrid}, Topic, Properties, Payload, PubOpts)
   when is_binary(Topic), is_map(Properties), is_list(PubOpts) ->
     TopicPath = emqb_topic:parse(Topic),
     case {opt_bypass(PubOpts),
@@ -179,9 +179,9 @@ publish({ClientPid, _Owner, external}, Topic, Properties, Payload, PubOpts)
 puback({_ClientPid, _Owner, internal}, _PacketId, _ReasonCode, _Properties) ->
     % We just ignore PUBACK in internal mode
     ok;
-puback({_ClientPid, _Owner, hybride}, PacketId, _ReasonCode, _Properties)
+puback({_ClientPid, _Owner, hybrid}, PacketId, _ReasonCode, _Properties)
   when is_reference(PacketId) ->
-    % In hybride mode, we ignore PUBACK for internally delivered messages
+    % In hybrid mode, we ignore PUBACK for internally delivered messages
     ok;
 puback({ClientPid, _Owner, _Mode}, PacketId, ReasonCode, Properties)
   when is_integer(PacketId), is_integer(ReasonCode), is_map(Properties) ->
@@ -219,7 +219,7 @@ init([Opts]) ->
     }),
     {StartMqtt, Register, InitialState} = case Data#data.mode of
         internal -> {false, true, internal_mode};
-        hybride -> {true, true, disconnected};
+        hybrid -> {true, true, disconnected};
         external -> {true, false, disconnected}
     end,
     case Register of
@@ -298,7 +298,7 @@ connecting(state_timeout, connect, Data = #data{reconn_retries = Retries}) ->
                 reconn_retries = 1
             },
             case Data3#data.mode of
-                hybride -> {next_state, hybride_mode, Data3};
+                hybrid -> {next_state, hybrid_mode, Data3};
                 external -> {next_state, external_mode, Data3}
             end
     end;
@@ -367,11 +367,11 @@ external_mode(EventType, EventContent, Data) ->
     handle_event(EventType, EventContent, external_mode, Data).
 
 
-%-- Hybride Mode State Event Handler -------------------------------------------
+%-- Hybrid Mode State Event Handler --------------------------------------------
 
-hybride_mode(enter, _OldState, _Data) ->
+hybrid_mode(enter, _OldState, _Data) ->
     keep_state_and_data;
-hybride_mode({call, From}, {subscribe, Properties, Topics}, Data) ->
+hybrid_mode({call, From}, {subscribe, Properties, Topics}, Data) ->
     case subscribe_external(Data, Properties, Topics) of
         {error, Reason1, Data2} ->
             ?LOG_WARNING("External MQTT subscribe failed: ~p", [Reason1]),
@@ -380,7 +380,7 @@ hybride_mode({call, From}, {subscribe, Properties, Topics}, Data) ->
             {_, _, Data3} = subscribe_internal(Data2, Properties, Topics),
             {keep_state, Data3, [{reply, From, {ok, ExtProps, ExtCodes}}]}
     end;
-hybride_mode({call, From}, {unsubscribe, Properties, Topics}, Data) ->
+hybrid_mode({call, From}, {unsubscribe, Properties, Topics}, Data) ->
     case unsubscribe_external(Data, Properties, Topics) of
         {error, Reason1, Data2} ->
             ?LOG_WARNING("External MQTT unsubscribe failed: ~p", [Reason1]),
@@ -389,7 +389,7 @@ hybride_mode({call, From}, {unsubscribe, Properties, Topics}, Data) ->
             {_, _, Data3} = unsubscribe_internal(Data2, Properties, Topics),
             {keep_state, Data3, [{reply, From, {ok, ExtProps, ExtCodes}}]}
     end;
-hybride_mode({call, From}, {publish_external, Topic, Properties, Payload, Opts}, Data) ->
+hybrid_mode({call, From}, {publish_external, Topic, Properties, Payload, Opts}, Data) ->
     case publish_external(Data, Topic, Properties, Payload, Opts) of
         {error, Reason, Data2} ->
             ?LOG_WARNING("External MQTT publish failed: ~p", [Reason]),
@@ -399,37 +399,37 @@ hybride_mode({call, From}, {publish_external, Topic, Properties, Payload, Opts},
         {ok, PacketId, Data2} ->
             {keep_state, Data2, [{reply, From, {ok, PacketId}}]}
     end;
-hybride_mode({call, From}, {topic_added, TopicPath, TopicPid}, Data) ->
+hybrid_mode({call, From}, {topic_added, TopicPath, TopicPid}, Data) ->
     {Data2, Subs} = topic_added_internal(Data, TopicPath, TopicPid),
     {keep_state, Data2, [{reply, From, Subs}]};
-hybride_mode({call, From}, {topic_removed, TopicPath}, Data) ->
+hybrid_mode({call, From}, {topic_removed, TopicPath}, Data) ->
     {Data2, Refs} = topic_removed_internal(Data, TopicPath),
     {keep_state, Data2, [{reply, From, Refs}]};
-hybride_mode(cast, {send_puback, PacketId, ReasonCode, Properties}, Data)
+hybrid_mode(cast, {send_puback, PacketId, ReasonCode, Properties}, Data)
   when is_integer(PacketId) ->
     % PUBACK for a broker-generated packet identifier
     {keep_state, puback_external(Data, PacketId, ReasonCode, Properties)};
-hybride_mode(cast, {dispatch, SubRef, Props, TopicPath, Payload, PubOpts}, Data) ->
+hybrid_mode(cast, {dispatch, SubRef, Props, TopicPath, Payload, PubOpts}, Data) ->
     {keep_state, dispatch_internal(Data, SubRef, TopicPath,
                                    Props, Payload, PubOpts)};
-hybride_mode(info, {disconnected, ReasonCode, _Properties}, Data) ->
+hybrid_mode(info, {disconnected, ReasonCode, _Properties}, Data) ->
     %TODO: Extract relevent information from the properties if available.
     ?LOG_WARNING("Got disconnected from the MQTT broker: ~s",
                  [emqb_utils:mqtt_discode2reason(ReasonCode)]),
     {next_state, disconnected, Data#data{connected = false}};
-hybride_mode(info, {publish, Msg}, Data) ->
+hybrid_mode(info, {publish, Msg}, Data) ->
     {keep_state, dispatch_external(Data, Msg)};
-hybride_mode(info, {puback, #{packet_id:= PacketId, reason_code:= Code}} = Msg,
+hybrid_mode(info, {puback, #{packet_id:= PacketId, reason_code:= Code}} = Msg,
        #data{owner = Owner}) ->
     ?LOG_DEBUG("Received MQTT puback for packet ~w: ~s",
                [PacketId, emqb_utils:mqtt_code2reason(Code)]),
     Owner ! {puback, Msg},
     keep_state_and_data;
-hybride_mode(info, {'DOWN', MonRef, process, _Pid, Reason},
+hybrid_mode(info, {'DOWN', MonRef, process, _Pid, Reason},
        Data = #data{client_mon = MonRef}) ->
     {next_state, disconnected, emqtt_crashed(Data, Reason)};
-hybride_mode(EventType, EventContent, Data) ->
-    handle_event(EventType, EventContent, hybride_mode, Data).
+hybrid_mode(EventType, EventContent, Data) ->
+    handle_event(EventType, EventContent, hybrid_mode, Data).
 
 
 %-- Internal Mode State Event Handler ------------------------------------------
@@ -481,7 +481,7 @@ opt_bypass(PropList) ->
     proplists:get_value(bypass, PropList, false).
 
 opt_mode(PropList) ->
-    proplists:get_value(mode, PropList, hybride).
+    proplists:get_value(mode, PropList, hybrid).
 
 opt_owner(PropList) ->
     proplists:get_value(owner, PropList).
@@ -537,7 +537,7 @@ init([{owner, Owner} | Opts], Data)
     link(Owner),
     init(Opts, Data#data{owner = Owner});
 init([{mode, Mode} | Opts], Data)
-  when Mode =:= internal; Mode =:= external; Mode =:= hybride ->
+  when Mode =:= internal; Mode =:= external; Mode =:= hybrid ->
     init(Opts, Data#data{mode = Mode});
 init([{conn_type, ConnType} | Opts], Data)
   when ConnType =:= tcp; ConnType =:= ws ->
@@ -674,10 +674,10 @@ publish_external(Data, Topic, Properties, Payload, Opts) ->
     case Codec:encode(Properties, Payload) of
         {error, Reason} -> {error, Reason, Data};
         {ok, Properties2, PayloadBin} ->
-            % In hybride mode, we add a custom property to be able to filter
+            % In hybrid mode, we add a custom property to be able to filter
             % out our own message comming back from us from the MQTT broker.
             Properties3 = case Mode of
-                hybride ->
+                hybrid ->
                     InstanceId = emqb_app:instance_id(),
                     add_custom_prop(bid, InstanceId, Properties2);
                 _ ->

@@ -64,7 +64,7 @@
 
 -type client() :: emqb_client:client().
 -type payload() :: term().
--type mode() :: internal | external | hybride.
+-type mode() :: internal | external | hybrid.
 -type conn_type() :: tcp | ws.
 
 % Change to use emqtt:qos() when supporting QoS 2
@@ -180,16 +180,16 @@ start_link() ->
 %% <p>The extra possible options specific to <c>emqb</c> are:
 %% <ul>
 %%     <li><b><c>mode</c></b>: the startup mode of the MQTT bridge,
-%%       <c>external</c>,, <c>internal</c> or <c>hybride</c>.
+%%       <c>external</c>,, <c>internal</c> or <c>hybrid</c>.
 %%       In internal mode, the bridge will not try to connect to
 %%       a MQTT broker and will only work internally.
 %%       In external mode the bridge will connect to
 %%       the MQTT broker and only use external MQTT message.
-%%       In hybride mode, the bridge will connect to the MQTT
+%%       In hybrid mode, the bridge will connect to the MQTT
 %%       broker and post the message both internally
 %%       and to the broker, and if the publish option <c>bypass</c> is
 %%       specified and there is a local consumer for the message, it will
-%%       not be published to the MQTT broker. Default: <c>hybride</c>.
+%%       not be published to the MQTT broker. Default: <c>hybrid</c>.
 %%     </li>
 %%     <li><b><c>conn_type</c></b>: the connection type to use to
 %%      connect to the MQTT broker, could be either <c>tcp</c>

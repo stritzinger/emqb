@@ -73,14 +73,14 @@ end()).
 all() -> [
     {group, internal},
     {group, external},
-    {group, hybride}
+    {group, hybrid}
 ].
 
 groups() ->
     [
         {internal, [sequence], ?TESTS},
         {external, [sequence], ?TESTS},
-        {hybride, [sequence], ?TESTS}
+        {hybrid, [sequence], ?TESTS}
     ].
 
 init_per_suite(Config) ->
@@ -115,7 +115,7 @@ init_per_suite(Config) ->
 end_per_suite(_Config) ->
     ok.
 
-init_per_group(Mode, Config) when Mode =:= external; Mode =:= hybride ->
+init_per_group(Mode, Config) when Mode =:= external; Mode =:= hybrid ->
     case proplists:get_value(mqtt_available, Config, false) of
         true -> client_opts_update(Config, mode, Mode);
         false -> {skip, mqtt_broker_unavailable}
