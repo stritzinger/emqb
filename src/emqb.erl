@@ -87,11 +87,11 @@
 -type puback() :: #{
     packet_id := emqtt:packet_id() | reference(),
     properties := emqtt:properties(),
-    reason_code := emqtt:reason_code()
+    reason_code := reason_code()
 }.
 
 % The emqtt option proto_ver is not allowed, but for simplicity...
--type option() :: emqtt:options()
+-type option() :: emqtt:option()
                 | {mode, mode()}
                 | {conn_type, conn_type()}.
 -type option_map() :: #{
@@ -115,7 +115,7 @@
     port => inet:port_number(),
     tcp_opts => [gen_tcp:option()],
     ssl => boolean(),
-    ssl_opts => [ssl:ssl_option()],
+    ssl_opts => [ssl:tls_client_option()],
     ws_path => string(),
     connect_timeout => pos_integer(),
     bridge_mode => boolean(),
@@ -136,6 +136,7 @@
 }.
 -type start_opts() :: option_map() | [option()].
 
+-type(reason_code() :: 0..16#FF).
 
 % Change to use emqtt:subopt() when supporting QoS 2
 -type subopt() :: {rh, 0 | 1 | 2}
@@ -145,8 +146,8 @@
 -type subopts() :: qos() | qos_name() | [subopt()].
 -type topic_spec() :: emqtt:topic()
                     | {emqtt:topic(), subopts()}
-                    | [{emqtt:topic(), subopts()}].
--type subscribe_ret() :: {ok, emqtt:properties(), [emqtt:reason_code()]}
+                    | [emqtt:topic() | {emqtt:topic(), subopts()}].
+-type subscribe_ret() :: {ok, emqtt:properties(), [reason_code()]}
                        | {error, term()}.
 
 % Change to use emqtt:pubopt() when supporting QoS 2
@@ -159,7 +160,7 @@
 
 -export_type([
     client/0, mode/0, conn_type/0, qos/0, option/0, subscribe_ret/0, payload/0,
-    message/0, puback/0, subopt/0, subopts/0, pubopt/0, pubopts/0
+    message/0, puback/0, reason_code/0, subopt/0, subopts/0, pubopt/0, pubopts/0
 ]).
 
 
@@ -344,13 +345,13 @@ puback(Client, PacketId) when is_integer(PacketId) ->
     emqb_client:puback(Client, PacketId, ?RC_SUCCESS, #{}).
 
 %% @doc Acknowledge a message received with QoS 1 and no `auto_ack'.
--spec puback(emqb_client:client(), emqtt:packet_id(), emqtt:reason_code()) -> ok.
+-spec puback(emqb_client:client(), emqtt:packet_id(), reason_code()) -> ok.
 puback(Client, PacketId, ReasonCode)
   when is_integer(PacketId), is_integer(ReasonCode) ->
     emqb_client:puback(Client, PacketId, ReasonCode, #{}).
 
 %% @doc Acknowledge a message received with QoS 1 and no `auto_ack'.
--spec puback(emqb_client:client(), emqtt:packet_id(), emqtt:reason_code(), emqtt:properties()) -> ok.
+-spec puback(emqb_client:client(), emqtt:packet_id(), reason_code(), emqtt:properties()) -> ok.
 puback(Client, PacketId, ReasonCode, Properties)
   when is_integer(PacketId), is_integer(ReasonCode), is_map(Properties) ->
     emqb_client:puback(Client, PacketId, ReasonCode, Properties).

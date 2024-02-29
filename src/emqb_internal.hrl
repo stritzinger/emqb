@@ -28,7 +28,7 @@
     client :: pid(),
     owner :: pid(),
     sid :: undefined | non_neg_integer(),
-    qos :: emqb:qos(),
+    qos :: undefined | emqb:qos(),
     rh ::  undefined | 0 | 1 | 2,
     rap :: undefined | boolean(),
     nl :: undefined | boolean()

@@ -175,7 +175,7 @@ publish({ClientPid, _Owner, external}, Topic, Properties, Payload, PubOpts)
     gen_statem:call(ClientPid, Req).
 
 -spec puback(client(), emqtt:packet_id() | reference(),
-             emqtt:reason_code(), emqtt:properties()) -> ok.
+             emqb:reason_code(), emqtt:properties()) -> ok.
 puback({_ClientPid, _Owner, internal}, _PacketId, _ReasonCode, _Properties) ->
     % We just ignore PUBACK in internal mode
     ok;
@@ -201,7 +201,7 @@ topic_removed(ClientPid, TopicPath) ->
 
 %%% TOPIC NOTIFICATION FUNCTIONS %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
--spec dispatch(pid(), reference(), emqtt:properties(), embq_topic:path(),
+-spec dispatch(pid(), reference(), emqtt:properties(), emqb_topic:path(),
                term(), [pubopt()]) -> ok.
 dispatch(ClientPid, SubRef, Props, TopicPath, Payload, PubOpts) ->
     Msg = {dispatch, SubRef, Props, TopicPath, Payload, PubOpts},
@@ -483,7 +483,7 @@ terminate(Reason, _State, Data) ->
 %%% INTERNAL FUNCTIONS %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 opt_qos(PropList) ->
-    ?QOS_I(proplists:get_value(qos, PropList, ?QOS_0)).
+    proplists:get_value(qos, PropList, ?QOS_0).
 
 opt_bypass(PropList) ->
     proplists:get_value(bypass, PropList, false).

@@ -41,7 +41,7 @@ start_tracing(_TestName) ->
     ok.
 
 stop_tracing(_TestName) ->
-    dbg:stop_clear().
+    dbg:stop().
 
 
 %%% INTERNAL FUNCTIONS %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%

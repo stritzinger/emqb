@@ -18,6 +18,9 @@
 
 -behaviour(emqb_codec).
 
+% It seems there is some issues with dialyzer and jsx
+-dialyzer({[no_missing_calls], [encode/2, json_decode/1]}).
+
 
 %%% EXPORTS %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
