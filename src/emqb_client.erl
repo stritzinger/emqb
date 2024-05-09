@@ -985,7 +985,7 @@ topic_removed_internal(Data, TopicPath) ->
     % Then return all the reference for the subscriptions to be removed
     {Topics2, OldRefs} = lists:foldl(fun(Ref, {TMaps, Acc}) ->
         #{Ref := TMap} = TMaps,
-        TMaps2 = #{Ref => maps:remove(TopicPath, TMap)},
+        TMaps2 = TMaps#{Ref => maps:remove(TopicPath, TMap)},
         {TMaps2, [Ref | Acc]}
     end, {Topics, []}, SubRefs),
     {Data#data{topics = Topics2}, OldRefs}.

@@ -42,6 +42,7 @@
 -export([simple_publish_test_config/0, simple_publish_test/1]).
 -export([subscribe_spec_test_config/0, subscribe_spec_test/1]).
 -export([unsubscribe_test_config/0, unsubscribe_test/1]).
+-export([topic_timeout_test_config/0, topic_timeout_test/1]).
 
 
 %%% MACROS %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -62,11 +63,16 @@ end()).
     end
 end()).
 
--define(TESTS, [
+-define(GENERIC_TESTS, [
     simple_publish_test,
     subscribe_spec_test,
     unsubscribe_test
 ]).
+
+-define(INTERNAL_TESTS, [
+    topic_timeout_test
+]).
+
 
 %%% COMMON TEST FUNCTIONS %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
@@ -78,9 +84,9 @@ all() -> [
 
 groups() ->
     [
-        {internal, [sequence], ?TESTS},
-        {external, [sequence], ?TESTS},
-        {hybrid, [sequence], ?TESTS}
+        {internal, [sequence], ?GENERIC_TESTS ++ ?INTERNAL_TESTS},
+        {external, [sequence], ?GENERIC_TESTS},
+        {hybrid, [sequence], ?GENERIC_TESTS ++ ?INTERNAL_TESTS}
     ].
 
 init_per_suite(Config) ->
@@ -297,6 +303,68 @@ unsubscribe_test(_Config) ->
 
     publish(producer, <<"foo/boz">>, <<"msg2">>),
     publish(producer, <<"foo/bar/boz">>, <<"msg3">>),
+
+    ?assertNoMoreMessages(),
+
+    ok.
+
+topic_timeout_test_config() -> [
+    % tracing,
+    {proc_names, [client1, client2, client3]}
+].
+
+topic_timeout_test(_Config) ->
+    subscribe(client1, <<"client1/foo">>),
+    subscribe(client1, <<"client1/bar">>),
+    subscribe(client2, <<"client2/foo">>),
+    subscribe(client2, <<"client2/bar">>),
+    subscribe(client3, <<"client3/foo">>),
+    subscribe(client3, <<"client3/bar">>),
+
+    publish(client1, <<"client2/foo">>, <<"req1">>),
+    ?assertMessage(client2, {publish, #{payload := <<"req1">>}}),
+
+    publish(client2, <<"client1/bar">>, <<"req2">>),
+    ?assertMessage(client1, {publish, #{payload := <<"req2">>}}),
+
+    publish(client2, <<"client3/foo">>, <<"req3">>),
+    ?assertMessage(client3, {publish, #{payload := <<"req3">>}}),
+
+    publish(client3, <<"client2/bar">>, <<"req4">>),
+    ?assertMessage(client2, {publish, #{payload := <<"req4">>}}),
+
+    lists:foreach(fun(T) ->
+        {ok, Pid} = emqb_registry:lookup_topic(T),
+        Pid ! timeout
+    end, [
+        [<<"client1">>, <<"bar">>],
+        [<<"client3">>, <<"foo">>],
+        [<<"client2">>, <<"bar">>],
+        [<<"client2">>, <<"foo">>]
+    ]),
+
+    timer:sleep(1000),
+
+    lists:foreach(fun(T) ->
+        ?assertMatch(error, emqb_registry:lookup_topic(T))
+    end, [
+        [<<"client1">>, <<"bar">>],
+        [<<"client3">>, <<"foo">>],
+        [<<"client2">>, <<"bar">>],
+        [<<"client2">>, <<"foo">>]
+    ]),
+
+    publish(client1, <<"client2/foo">>, <<"req5">>),
+    ?assertMessage(client2, {publish, #{payload := <<"req5">>}}),
+
+    publish(client2, <<"client1/bar">>, <<"req6">>),
+    ?assertMessage(client1, {publish, #{payload := <<"req6">>}}),
+
+    publish(client2, <<"client3/foo">>, <<"req7">>),
+    ?assertMessage(client3, {publish, #{payload := <<"req7">>}}),
+
+    publish(client3, <<"client2/bar">>, <<"req8">>),
+    ?assertMessage(client2, {publish, #{payload := <<"req8">>}}),
 
     ?assertNoMoreMessages(),
 
