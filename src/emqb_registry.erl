@@ -66,7 +66,9 @@
 -record(state, {
     clients = #{} :: #{pid() => #client_data{}},
     topics :: emqb_topic_tree:topic_tree(#topic_data{}),
-    monitors = #{} :: #{reference() => #topic_data{} | #client_data{}}
+    monitors = #{} :: #{reference() => #topic_data{} | #client_data{}},
+    async :: emqb_client:async_context(),
+    pending = #{} :: #{reference() => {pos_integer(), gen_server:from(), Acc :: list()}}
 }).
 
 
@@ -125,7 +127,8 @@ get_subscriptions(TopicPath) ->
 init([]) ->
     ets:new(?TOPIC_TABLE, [protected, named_table, set, {read_concurrency, true}]),
     ets:new(?SUBSCRIPTION_TABLE, [protected, named_table, set, {read_concurrency, true}]),
-    {ok, #state{topics = emqb_topic_tree:new()}}.
+    Async = emqb_client:async_new(),
+    {ok, #state{topics = emqb_topic_tree:new(), async = Async}}.
 
 handle_call({match_topics, TopicPattern}, _From,
             State = #state{topics = TopicTree}) ->
@@ -141,20 +144,24 @@ handle_call({register_client, ClientPid}, _From,
     NewClients = Clients#{ClientPid => Data},
     NewMonitors = Monitors#{MonRef => Data},
     {reply, ok, State#state{clients = NewClients, monitors = NewMonitors}};
-handle_call({register_topic, TopicPid, TopicPath}, _From,
+handle_call({register_topic, TopicPid, TopicPath}, From,
             State = #state{clients = Clients, topics = TopicTree,
-                           monitors = Monitors}) ->
+                           monitors = Monitors, async = Async,
+                           pending = Pending}) ->
     MonRef = erlang:monitor(process, TopicPid),
     Data = #topic_data{path = TopicPath, pid = TopicPid, mon = MonRef},
     NewMonitors = Monitors#{MonRef => Data},
     ets:insert(?TOPIC_TABLE, {TopicPath, TopicPid}),
     NewTopicTree = emqb_topic_tree:update(TopicPath, Data, TopicTree),
-    NewState = State#state{topics = NewTopicTree, monitors = NewMonitors},
-    Subscriptions = lists:flatten(maps:fold(fun(ClientPid, _, Acc) ->
-        [emqb_client:topic_added(ClientPid, TopicPath, TopicPid) | Acc]
-    end, [], Clients)),
-    addsub(TopicPath, Subscriptions),
-    {reply, Subscriptions, NewState};
+    PendingRef = make_ref(),
+    Pending2 = Pending#{PendingRef => {maps:size(Clients), From, []}},
+    Async2 = maps:fold(fun(ClientPid, _, A) ->
+        Label = {topic_added, PendingRef, TopicPath},
+        emqb_client:async_topic_added(A, ClientPid, TopicPath, TopicPid, Label)
+    end, Async, Clients),
+    NewState = State#state{topics = NewTopicTree, monitors = NewMonitors,
+                           async = Async2, pending = Pending2},
+    {noreply, NewState};
 handle_call({add_subscriptions, TopicPath, Subscriptions}, _From, State) ->
     {reply, addsub(TopicPath, Subscriptions), State};
 handle_call({del_subscriptions, TopicPath, SubRefs}, _From, State) ->
@@ -169,19 +176,20 @@ handle_cast(Msg, State) ->
 
 handle_info({'DOWN', MonRef, process, _TopicPid, _Reason},
             State = #state{topics = TopicTree, clients = Clients,
-                           monitors = Monitors}) ->
+                           monitors = Monitors, async = Async}) ->
     case maps:take(MonRef, Monitors) of
         error -> {noreply, State};
         {#topic_data{path = TopicPath}, NewMonitors} ->
             % Topic process died
             ets:delete(?TOPIC_TABLE, TopicPath),
             NewTopicTree = emqb_topic_tree:remove(TopicPath, TopicTree),
+            Async2 = maps:fold(fun(ClientPid, _, A) ->
+                Label = {topic_removed, TopicPath},
+                emqb_client:async_topic_removed(A, ClientPid, TopicPath, Label)
+            end, Async, Clients),
             NewState = State#state{topics = NewTopicTree,
-                                   monitors = NewMonitors},
-            SubRefs = lists:flatten(maps:fold(fun(ClientPid, _, Acc) ->
-                [emqb_client:topic_removed(ClientPid, TopicPath) | Acc]
-            end, [], Clients)),
-            delsub(TopicPath, SubRefs),
+                                   monitors = NewMonitors,
+                                   async = Async2},
             {noreply, NewState};
         {#client_data{pid = ClientPid}, NewMonitors} ->
             % Client process died
@@ -190,15 +198,46 @@ handle_info({'DOWN', MonRef, process, _TopicPid, _Reason},
                                    monitors = NewMonitors},
             {noreply, NewState}
     end;
-handle_info(Info, State) ->
-    ?LOG_WARNING("Unexpected message ~p", [Info]),
-    {noreply, State}.
+handle_info(Info, State = #state{async = Async}) ->
+    case emqb_client:async_check(Info, Async) of
+        A when A =:= no_reply; A =:= no_request ->
+            ?LOG_WARNING("Unexpected message ~p", [Info]),
+            {noreply, State};
+        {{reply, Subs}, {topic_added, Ref, TopicPath}, Async2} ->
+            addsub(TopicPath, Subs),
+            State2 = async_topic_added(State, Ref, Subs),
+            {noreply, State2#state{async = Async2}};
+        {{error, {Reason, ServerRef}}, {topic_added, Ref, _TopicPath}, Async2} ->
+            ?LOG_WARNING("Failed to notify added topic to ~p: ~p",
+                         [ServerRef, Reason]),
+            State2 = async_topic_added(State, Ref, []),
+            {noreply, State2#state{async = Async2}};
+        {{reply, SubRefs}, {topic_removed, TopicPath}, Async2} ->
+            delsub(TopicPath, SubRefs),
+            {noreply, State#state{async = Async2}};
+        {{error, {Reason, ServerRef}}, {topic_removed, _TopicPath}, Async2} ->
+            ?LOG_WARNING("Failed to notify removed topic to ~p: ~p",
+                         [ServerRef, Reason]),
+            {noreply, State#state{async = Async2}}
+    end.
 
 terminate(_Reason, _State) ->
     ok.
 
 
 %%% INTERNAL FUNCTION %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+async_topic_added(State = #state{pending = Pending}, Ref, Subs) ->
+    #{Ref := {Count, From, Acc}} = Pending,
+    case Count > 1 of
+        true ->
+            Pending2 = Pending#{Ref := {Count - 1, From, [Subs | Acc]}},
+            State#state{pending = Pending2};
+        false ->
+            gen_server:reply(From, lists:flatten([Subs | Acc])),
+            Pending2 = maps:remove(Ref, Pending),
+            State#state{pending = Pending2}
+    end.
 
 addsub(TopicPath, #topic_subscription{ref = SubRef} = Sub) ->
     case ets:lookup(?SUBSCRIPTION_TABLE, TopicPath) of

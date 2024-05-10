@@ -46,8 +46,10 @@
 -export([puback/4]).
 
 % Registry notification functions
--export([topic_added/3]).
--export([topic_removed/2]).
+-export([async_new/0]).
+-export([async_topic_added/5]).
+-export([async_topic_removed/4]).
+-export([async_check/2]).
 
 % Topic notification functions
 -export([dispatch/6]).
@@ -67,6 +69,7 @@
 %%% TYPES %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 -opaque client() :: {pid(), pid(), emqb:mode()}.
+-opaque async_context() :: gen_statem:request_id_collection().
 
 -record(data, {
     name :: atom(),
@@ -111,7 +114,7 @@
                 | {qos, emqb:qos()}
                 | {bypass, boolean()}.
 
--export_type([client/0, subopt/0, pubopt/0]).
+-export_type([client/0, async_context/0, subopt/0, pubopt/0]).
 
 
 %%% API FUNCTIONS %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -190,13 +193,27 @@ puback({ClientPid, _Owner, _Mode}, PacketId, ReasonCode, Properties)
 
 %%% REGISTRY NOTIFICATION FUNCTIONS %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
--spec topic_added(pid(), emqb_topic:path(), pid()) -> [topic_subscription()].
-topic_added(ClientPid, TopicPath, TopicPid) ->
-    gen_statem:call(ClientPid, {topic_added, TopicPath, TopicPid}).
+-spec async_new() -> async_context().
+async_new() ->
+    gen_statem:reqids_new().
 
--spec topic_removed(pid(), emqb_topic:path()) -> [reference()].
-topic_removed(ClientPid, TopicPath) ->
-    gen_statem:call(ClientPid, {topic_removed, TopicPath}).
+-spec async_topic_added(async_context(), pid(), emqb_topic:path(), pid(), term()) -> async_context().
+async_topic_added(ReqIdCol, ClientPid, TopicPath, TopicPid, Label) ->
+    Req = {topic_added, TopicPath, TopicPid},
+    gen_statem:send_request(ClientPid, Req, Label, ReqIdCol).
+
+-spec async_topic_removed(async_context(), pid(), emqb_topic:path(), term()) -> async_context().
+async_topic_removed(ReqIdCol, ClientPid, TopicPath, Label) ->
+    Req = {topic_removed, TopicPath},
+    gen_statem:send_request(ClientPid, Req, Label, ReqIdCol).
+
+-spec async_check(Message :: term(), async_context()) ->
+    no_reply | no_request | {Response, Label :: term(), async_context()}
+  when
+    Response :: {reply, Reply :: term()}
+              | {error, {Reason :: term(), gen_statem:server_ref()}}.
+async_check(Msg, ReqIdCol) ->
+    gen_statem:check_response(Msg, ReqIdCol, true).
 
 
 %%% TOPIC NOTIFICATION FUNCTIONS %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
