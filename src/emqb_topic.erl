@@ -116,20 +116,32 @@ validate(_) ->
 
 -spec start_link(emqb_topic:path()) -> gen_server:start_ret().
 start_link(TopicPath) ->
-    gen_server:start_link(?MODULE, [TopicPath], []).
+    ?LOG_INFO(">>>>> emqb_topic API start_link(~p) ~p -> ???", [TopicPath, self()]),
+    Res = gen_server:start_link(?MODULE, [TopicPath], []),
+    ?LOG_INFO("<<<<< emqb_topic API start_link(~p) ~p <- ~p", [TopicPath, self(), Res]),
+    Res.
 
 -spec subscribe(pid(), topic_subscription()) -> ok.
 subscribe(TopicPid, Sub) ->
-    gen_server:call(TopicPid, {subscribe, Sub}).
+    ?LOG_INFO(">>>>> emqb_topic API subscribe(~p) ~p -> ~p", [Sub, self(), TopicPid]),
+    Res = gen_server:call(TopicPid, {subscribe, Sub}),
+    ?LOG_INFO("<<<<< emqb_topic API subscribe(~p) ~p <- ~p", [Sub, self(), TopicPid]),
+    Res.
 
 -spec unsubscribe(pid(), reference()) -> ok.
 unsubscribe(TopicPid, SubRef) ->
-    gen_server:call(TopicPid, {unsubscribe, SubRef}).
+    ?LOG_INFO(">>>>> emqb_topic API unsubscribe(~p) ~p -> ~p", [SubRef, self(), TopicPid]),
+    Res = gen_server:call(TopicPid, {unsubscribe, SubRef}),
+    ?LOG_INFO("<<<<< emqb_topic API unsubscribe(~p) ~p <- ~p", [SubRef, self(), TopicPid]),
+    Res.
 
 -spec publish(pid(), emqtt:properties(), emqb:payload(), [emqb_client:pubopt()])
     -> boolean().
 publish(TopicPid, Properties, Payload, Opts) ->
-    gen_server:call(TopicPid, {publish, Properties, Payload, Opts}).
+    ?LOG_INFO(">>>>> emqb_topic API publish(...) ~p -> ~p", [self(), TopicPid]),
+    Res = gen_server:call(TopicPid, {publish, Properties, Payload, Opts}),
+    ?LOG_INFO("<<<<< emqb_topic API publish(...) ~p <- ~p", [self(), TopicPid]),
+    Res.
 
 -spec keep_alive(pid()) -> ok.
 keep_alive(TopicPid) ->
@@ -140,7 +152,9 @@ keep_alive(TopicPid) ->
 
 init([TopicPath]) ->
     ?LOG_INFO("Local topic ~s process started", [format(TopicPath)]),
+    % ?LOG_INFO(">>>>> ~p emqb_topic process call emqb_registry:register_topic", [self()]),
     Subscriptions = emqb_registry:register_topic(self(), TopicPath),
+    % ?LOG_INFO("<<<<< ~p emqb_topic process call emqb_registry:register_topic", [self()]),
     State = add_subscribers(#state{path = TopicPath}, Subscriptions),
     {ok, State, ?INACTIVITY_TIMOUT}.
 

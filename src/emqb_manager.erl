@@ -63,7 +63,11 @@ start_link() ->
 topic(TopicPath) ->
     case emqb_registry:lookup_topic(TopicPath) of
         {ok, TopicPid} -> {ok, TopicPid};
-        error -> gen_server:call(?SERVER, {create_topic, TopicPath})
+        error ->
+            % ?LOG_INFO(">>>>> ~p emqb_manager API topic", [self()]),
+            Res = gen_server:call(?SERVER, {create_topic, TopicPath}),
+            % ?LOG_INFO("<<<<< ~p emqb_manager API topic", [self()]),
+            Res
     end.
 
 
@@ -75,7 +79,12 @@ init([]) ->
 handle_call({create_topic, TopicPath}, _From, State) ->
     case emqb_registry:lookup_topic(TopicPath) of
         {ok, TopicPid} -> {reply, {ok, TopicPid}, State};
-        error -> {reply, emqb_topic_sup:start_topic(TopicPath), State}
+        error ->
+            % ?LOG_INFO(">>>>> ~p emqb_manager process call emqb_topic_sup:start_topic", [self()]),
+            Pid = emqb_topic_sup:start_topic(TopicPath),
+            % ?LOG_INFO("<<<<< ~p emqb_manager process call emqb_topic_sup:start_topic", [self()]),
+            {reply, Pid, State}
+            % {reply, emqb_topic_sup:start_topic(TopicPath), State}
     end;
 handle_call(Request, From, State) ->
     ?LOG_WARNING("Unexpected call ~p from ~p", [Request, From]),

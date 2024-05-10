@@ -46,8 +46,10 @@
 -export([puback/4]).
 
 % Registry notification functions
--export([topic_added/3]).
--export([topic_removed/2]).
+-export([async_new/0]).
+-export([async_topic_added/5]).
+-export([async_topic_removed/4]).
+-export([async_check/2]).
 
 % Topic notification functions
 -export([dispatch/6]).
@@ -67,6 +69,7 @@
 %%% TYPES %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 -opaque client() :: {pid(), pid(), emqb:mode()}.
+-opaque async_context() :: gen_statem:request_id_collection().
 
 -record(data, {
     name :: atom(),
@@ -111,7 +114,7 @@
                 | {qos, emqb:qos()}
                 | {bypass, boolean()}.
 
--export_type([client/0, subopt/0, pubopt/0]).
+-export_type([client/0, async_context/0, subopt/0, pubopt/0]).
 
 
 %%% API FUNCTIONS %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -125,8 +128,11 @@ start_link(Opts) when is_list(Opts) ->
         undefined -> with_owner(Opts);
         Name when is_atom(Name) -> Opts
     end,
+    ?LOG_INFO(">>>>> emqb_client API start_link ~p -> ???", [self()]),
     case gen_statem:start_link(?MODULE, [Opts2], []) of
-        {ok, ClientPid} -> {ok, {ClientPid, opt_owner(Opts2), opt_mode(Opts2)}};
+        {ok, ClientPid} ->
+            ?LOG_INFO("<<<<< emqb_client API start_link ~p <- ~p", [self(), ClientPid]),
+            {ok, {ClientPid, opt_owner(Opts2), opt_mode(Opts2)}};
         {error, _Reason} = Error -> Error;
         ignore -> ignore
     end.
@@ -137,14 +143,20 @@ start_link(Opts) when is_list(Opts) ->
 subscribe({ClientPid, _Owner, _Mode}, Properties, TopicSpec)
   when is_map(Properties), is_list(TopicSpec) ->
     ParsedTopicSpec = [{{T, emqb_topic:parse(T)}, O} || {T, O} <- TopicSpec],
-    gen_statem:call(ClientPid, {subscribe, Properties, ParsedTopicSpec}).
+    ?LOG_INFO(">>>>> emqb_client API subscribe(~p) ~p -> ~p", [TopicSpec, self(), ClientPid]),
+    Res = gen_statem:call(ClientPid, {subscribe, Properties, ParsedTopicSpec}),
+    ?LOG_INFO("<<<<< emqb_client API subscribe(~p) ~p <- ~p", [TopicSpec, self(), ClientPid]),
+    Res.
 
 -spec unsubscribe(client(), emqtt:properties(), [emqtt:topic()])
     -> emqb:subscribe_ret().
 unsubscribe({ClientPid, _Owner, _Mode}, Properties, Topics)
   when is_map(Properties), is_list(Topics) ->
     ParsedTopics = [{T, emqb_topic:parse(T)} || T <- Topics],
-    gen_statem:call(ClientPid, {unsubscribe, Properties, ParsedTopics}).
+    ?LOG_INFO(">>>>> emqb_client API unsubscribe(~p) ~p -> ~p", [Topics, self(), ClientPid]),
+    Res = gen_statem:call(ClientPid, {unsubscribe, Properties, ParsedTopics}),
+    ?LOG_INFO("<<<<< emqb_client API unsubscribe(~p) ~p <- ~p", [Topics, self(), ClientPid]),
+    Res.
 
 -spec publish(client(), emqtt:topic(), emqtt:properties(),
               emqb:payload(), [pubopt()])
@@ -167,12 +179,18 @@ publish({ClientPid, Owner, hybrid}, Topic, Properties, Payload, PubOpts)
         {true, {ok, true, PacketRef}} -> {ok, PacketRef};
         {_, {ok, _, _}} ->
             Req = {publish_external, Topic, Properties, Payload, PubOpts},
-            gen_statem:call(ClientPid, Req)
+            ?LOG_INFO(">>>>> emqb_client API publish 1 ~p -> ~p", [self(), ClientPid]),
+            Res = gen_statem:call(ClientPid, Req),
+            ?LOG_INFO("<<<<< emqb_client API publish 1 ~p <- ~p", [self(), ClientPid]),
+            Res
     end;
 publish({ClientPid, _Owner, external}, Topic, Properties, Payload, PubOpts)
   when is_binary(Topic), is_map(Properties), is_list(PubOpts) ->
     Req = {publish_external, Topic, Properties, Payload, PubOpts},
-    gen_statem:call(ClientPid, Req).
+    ?LOG_INFO(">>>>> emqb_client API publish 2 ~p -> ~p", [self(), ClientPid]),
+    Res = gen_statem:call(ClientPid, Req),
+    ?LOG_INFO("<<<<< emqb_client API publish 2 ~p <- ~p", [self(), ClientPid]),
+    Res.
 
 -spec puback(client(), emqtt:packet_id() | reference(),
              emqb:reason_code(), emqtt:properties()) -> ok.
@@ -190,13 +208,47 @@ puback({ClientPid, _Owner, _Mode}, PacketId, ReasonCode, Properties)
 
 %%% REGISTRY NOTIFICATION FUNCTIONS %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
--spec topic_added(pid(), emqb_topic:path(), pid()) -> [topic_subscription()].
-topic_added(ClientPid, TopicPath, TopicPid) ->
-    gen_statem:call(ClientPid, {topic_added, TopicPath, TopicPid}).
+% -spec topic_added(pid(), emqb_topic:path(), pid()) -> [topic_subscription()].
+% topic_added(ClientPid, TopicPath, TopicPid) ->
+%     ?LOG_INFO(">>>>> emqb_client API topic_added ~p -> ~p", [self(), ClientPid]),
+%     Res = gen_statem:call(ClientPid, {topic_added, TopicPath, TopicPid}),
+%     ?LOG_INFO("<<<<< emqb_client API topic_added ~p <- ~p", [self(), ClientPid]),
+%     Res.
 
--spec topic_removed(pid(), emqb_topic:path()) -> [reference()].
-topic_removed(ClientPid, TopicPath) ->
-    gen_statem:call(ClientPid, {topic_removed, TopicPath}).
+% -spec topic_removed(pid(), emqb_topic:path()) -> [reference()].
+% topic_removed(ClientPid, TopicPath) ->
+%     ?LOG_INFO(">>>>> emqb_client API topic_removed ~p -> ~p", [self(), ClientPid]),
+%     Res = gen_statem:call(ClientPid, {topic_removed, TopicPath}),
+%     ?LOG_INFO("<<<<< emqb_client API topic_removed ~p <- ~p", [self(), ClientPid]),
+%     Res.
+
+-spec async_new() -> async_context().
+async_new() ->
+    gen_statem:reqids_new().
+
+-spec async_topic_added(async_context(), pid(), emqb_topic:path(), pid(), term()) -> async_context().
+async_topic_added(ReqIdCol, ClientPid, TopicPath, TopicPid, Label) ->
+    ?LOG_INFO(">>>>> emqb_client API async_topic_added(~p, ~p) ~p -> ~p", [TopicPath, TopicPid, self(), ClientPid]),
+    Req = {topic_added, TopicPath, TopicPid},
+    ReqIdCol2 = gen_statem:send_request(ClientPid, Req, Label, ReqIdCol),
+    ?LOG_INFO("<<<<< emqb_client API async_topic_added(~p, ~p) ~p <- ~p", [TopicPath, TopicPid, self(), ClientPid]),
+    ReqIdCol2.
+
+-spec async_topic_removed(async_context(), pid(), emqb_topic:path(), term()) -> async_context().
+async_topic_removed(ReqIdCol, ClientPid, TopicPath, Label) ->
+    ?LOG_INFO(">>>>> emqb_client API async_topic_removed(~p) ~p -> ~p", [TopicPath, self(), ClientPid]),
+    Req = {topic_removed, TopicPath},
+    ReqIdCol2 = gen_statem:send_request(ClientPid, Req, Label, ReqIdCol),
+    ?LOG_INFO("<<<<< emqb_client API async_topic_removed(~p) ~p <- ~p", [TopicPath, self(), ClientPid]),
+    ReqIdCol2.
+
+-spec async_check(Message :: term(), async_context()) ->
+    no_reply | no_request | {Response, Label :: term(), async_context()}
+  when
+    Response :: {reply, Reply :: term()}
+              | {error, {Reason :: term(), gen_statem:server_ref()}}.
+async_check(Msg, ReqIdCol) ->
+    gen_statem:check_response(Msg, ReqIdCol, true).
 
 
 %%% TOPIC NOTIFICATION FUNCTIONS %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -259,15 +311,19 @@ disconnected(state_timeout, retries_exausted,
     ?LOG_ERROR("Maximum number of reconnection attempt reached, terminating"),
     {stop, Reason, emqtt_stop(Data, Reason)};
 disconnected({call, _From}, {subscribe, _, _}, _Data) ->
+    ?LOG_INFO("!!!!! ~p emqb_client subscribe postponed 1", [self()]),
     {keep_state_and_data, [postpone]};
 disconnected({call, _From}, {unsubscribe, _, _}, _Data) ->
+    ?LOG_INFO("!!!!! ~p emqb_client unsubscribe postponed 1", [self()]),
     {keep_state_and_data, [postpone]};
 disconnected({call, _From}, {publish, _, _, _, _}, _Data) ->
+    ?LOG_INFO("!!!!! ~p emqb_client publish postponed 1", [self()]),
     {keep_state_and_data, [postpone]};
 disconnected(cast, {send_puback, _, _, _}, _Data) ->
     {keep_state_and_data, [postpone]};
 disconnected(info, {'DOWN', MonRef, process, _Pid, Reason},
              Data = #data{client_mon = MonRef}) ->
+    ?LOG_INFO("XXXXX ~p emqb_client EMQTT crached 1", [self()]),
     {repeat_state, emqtt_crashed(Data, Reason)};
 disconnected(EventType, EventContent, Data) ->
     handle_event(EventType, EventContent, disconnected, Data).
@@ -303,10 +359,13 @@ connecting(state_timeout, connect, Data = #data{reconn_retries = Retries}) ->
             end
     end;
 connecting({call, _From}, {subscribe, _, _}, _Data) ->
+    ?LOG_INFO("!!!!! ~p emqb_client subscribe postponed 2", [self()]),
     {keep_state_and_data, [postpone]};
 connecting({call, _From}, {unsubscribe, _, _}, _Data) ->
+    ?LOG_INFO("!!!!! ~p emqb_client unsubscribe postponed 2", [self()]),
     {keep_state_and_data, [postpone]};
 connecting({call, _From}, {publish, _, _, _, _}, _Data) ->
+    ?LOG_INFO("!!!!! ~p emqb_client publish postponed 2", [self()]),
     {keep_state_and_data, [postpone]};
 connecting(cast, {send_puback, _, _, _}, _Data) ->
     {keep_state_and_data, [postpone]};
@@ -376,6 +435,7 @@ hybrid_mode(enter, _OldState, Data) ->
     resubscribe_external(Data),
     keep_state_and_data;
 hybrid_mode({call, From}, {subscribe, Properties, TopicSpec}, Data) ->
+    ?LOG_INFO("CCCCC ~p emqb_client subscribe(~p)", [self(), TopicSpec]),
     {PrepTopicSpec, Data2} = subscribe_prepare(Data, Properties, TopicSpec),
     case subscribe_external(Data2, Properties, PrepTopicSpec) of
         {error, Reason1, Data3} ->
@@ -386,6 +446,7 @@ hybrid_mode({call, From}, {subscribe, Properties, TopicSpec}, Data) ->
             {keep_state, Data4, [{reply, From, {ok, ExtProps, ExtCodes}}]}
     end;
 hybrid_mode({call, From}, {unsubscribe, Properties, Topics}, Data) ->
+    ?LOG_INFO("CCCCC ~p emqb_client unsubscribe(~p)", [self(), Topics]),
     {PrepTopics, Data2} = unsubscribe_prepare(Data, Topics),
     case unsubscribe_external(Data2, Properties, PrepTopics) of
         {error, Reason1, Data3} ->
@@ -396,6 +457,7 @@ hybrid_mode({call, From}, {unsubscribe, Properties, Topics}, Data) ->
             {keep_state, Data4, [{reply, From, {ok, ExtProps, ExtCodes}}]}
     end;
 hybrid_mode({call, From}, {publish_external, Topic, Properties, Payload, Opts}, Data) ->
+    ?LOG_INFO("CCCCC ~p emqb_client publish_external", [self()]),
     case publish_external(Data, Topic, Properties, Payload, Opts) of
         {error, Reason, Data2} ->
             ?LOG_WARNING("External MQTT publish failed: ~p", [Reason]),
@@ -406,9 +468,11 @@ hybrid_mode({call, From}, {publish_external, Topic, Properties, Payload, Opts}, 
             {keep_state, Data2, [{reply, From, {ok, PacketId}}]}
     end;
 hybrid_mode({call, From}, {topic_added, TopicPath, TopicPid}, Data) ->
+    ?LOG_INFO("CCCCC ~p emqb_client topic_added(~p)", [self(), TopicPath]),
     {Data2, Subs} = topic_added_internal(Data, TopicPath, TopicPid),
     {keep_state, Data2, [{reply, From, Subs}]};
 hybrid_mode({call, From}, {topic_removed, TopicPath}, Data) ->
+    ?LOG_INFO("CCCCC ~p emqb_client topic_removed(~p)", [self(), TopicPath]),
     {Data2, Refs} = topic_removed_internal(Data, TopicPath),
     {keep_state, Data2, [{reply, From, Refs}]};
 hybrid_mode(cast, {send_puback, PacketId, ReasonCode, Properties}, Data)
@@ -433,6 +497,7 @@ hybrid_mode(info, {puback, #{packet_id:= PacketId, reason_code:= Code}} = Msg,
     keep_state_and_data;
 hybrid_mode(info, {'DOWN', MonRef, process, _Pid, Reason},
        Data = #data{client_mon = MonRef}) ->
+    ?LOG_INFO("XXXXX ~p emqb_client EMQTT crached 3", [self()]),
     {next_state, disconnected, emqtt_crashed(Data, Reason)};
 hybrid_mode(EventType, EventContent, Data) ->
     handle_event(EventType, EventContent, hybrid_mode, Data).
@@ -889,11 +954,15 @@ subscribe_internal(Data, _SubProps, [], ResProps, Acc) ->
 subscribe_internal(Data = #data{topics = Topics}, SubProps,
                    [{{{_, TopicPattern}, _}, SubData} | Rest], ResProps, Acc) ->
     #topic_subscription{ref = SubRef, qos = QoS} = SubData,
+    ?LOG_INFO(">>>>> emqb_client PROC subscribe_internal call emqb_registry:match_topics(~p) ~p -> registry", [TopicPattern, self()]),
     TopicPids = emqb_registry:match_topics(TopicPattern),
+    ?LOG_INFO("<<<<< emqb_client PROC subscribe_internal call emqb_registry:match_topics(~p) ~p <- registry", [TopicPattern, self()]),
     Topics2 = Topics#{SubRef => maps:from_list(TopicPids)},
     Data2 = Data#data{topics = Topics2},
     lists:foreach(fun({_, TopicPid}) ->
-        emqb_topic:subscribe(TopicPid, SubData)
+        ?LOG_INFO(">>>>> emqb_client PROC subscribe_internal call emqb_topic:subscribe(~p) ~p -> ~p", [SubData, self(), TopicPid]),
+        emqb_topic:subscribe(TopicPid, SubData),
+        ?LOG_INFO("<<<<< emqb_client PROC subscribe_internal call emqb_topic:subscribe(~p) ~p <- ~p", [SubData, self(), TopicPid])
     end, TopicPids),
     ResCode = case QoS of
         ?QOS_0 -> ?RC_GRANTED_QOS_0;
@@ -916,7 +985,9 @@ unsubscribe_internal(Data = #data{topics = Topics}, SubProps,
     Topics2 = maps:remove(SubRef, Topics),
     Data2 = Data#data{topics = Topics2},
     maps:foreach(fun(_, TopicPid) ->
-        emqb_topic:unsubscribe(TopicPid, SubRef)
+        ?LOG_INFO(">>>>> emqb_client PROC unsubscribe_internal call emqb_topic:unsubscribe(~p) ~p -> ~p", [SubRef, self(), TopicPid]),
+        emqb_topic:unsubscribe(TopicPid, SubRef),
+        ?LOG_INFO("<<<<< emqb_client PROC unsubscribe_internal call emqb_topic:unsubscribe(~p) ~p <- ~p", [SubRef, self(), TopicPid])
     end, TopicMap),
     ResCode = ?RC_SUCCESS,
     unsubscribe_internal(Data2, SubProps, Rest, ResProps, [ResCode | Acc]).
