@@ -790,7 +790,7 @@ dispatch_external(Data = #data{codec = Codec},
             % A client on the same VM instance sent this message,
             % we should get it internally.
             Data;
-        undefined ->
+        _ ->
             Props2 = del_custom_prop(bid, Props),
             case Codec:decode(Props2, Payload) of
                 {ok, DecPayload} ->
